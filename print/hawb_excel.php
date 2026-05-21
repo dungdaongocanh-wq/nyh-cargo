@@ -149,7 +149,7 @@ if (!$zip->getFromName($activeSheet)) $activeSheet='xl/worksheets/sheet1.xml';
 $ssRaw=$zip->getFromName('xl/sharedStrings.xml');
 $hasSS=(is_string($ssRaw)&&strlen($ssRaw)>0);
 
-// Parse shared strings index: value => index
+// Parse shared strings: value => index
 $ssIndex=[];
 if ($hasSS) {
     preg_match_all('/<si>(.*?)<\/si>/s',$ssRaw,$siM);
@@ -162,13 +162,12 @@ if ($hasSS) {
 }
 $ssCount=count($ssIndex);
 
-// ── Load sheet as RAW STRING ───────────────────────────
 $sheetRaw=(string)$zip->getFromName($activeSheet);
 
 // ══════════════════════════════════════════════════════
-// FAST CELL WRITER
-// Tìm cell bằng regex → thay nội dung <v> hoặc <is>
-// Giữ nguyên style (s="N"), chỉ thay value
+// CELL WRITER
+// BUG FIX: bỏ \b sau closing quote — \b sau " không
+// bao giờ match vì " là non-word character
 // ══════════════════════════════════════════════════════
 function writeFast(
     string &$sheet, string &$ssRaw,
@@ -178,37 +177,36 @@ function writeFast(
     if ($value==='') return;
     $isNum = is_numeric($value) && strpos($value,"\n")===false;
 
-    // Tìm cell node: <c r="REF" ...> ... </c>
-    // Giữ lại toàn bộ attributes (đặc biệt s="N" cho style)
-    $pat = '/(<c\s[^>]*\br="'.preg_quote($ref,'/').'"\b[^>]*>)(.*?)(<\/c>)/s';
+    // FIX: dùng (?=[\s">]) thay vì \b sau closing quote
+    // Đảm bảo r="REF" không match r="REF0" hay r="REF1"
+    $refQ  = preg_quote($ref,'/');
+    $pat   = '/(<c\b[^>]*\br="'.$refQ.'(?=[\s">])[^>]*>)(.*?)(<\/c>)/s';
 
     if (preg_match($pat,$sheet)) {
-        // Cell tồn tại → thay content, giữ opening tag
         $sheet = preg_replace_callback($pat,
-            function($m) use ($ref,$value,$isNum,$hasSS,&$ssRaw,&$ssIndex,&$ssCount) {
+            function($m) use ($value,$isNum,$hasSS,&$ssRaw,&$ssIndex,&$ssCount) {
                 $open  = $m[1];
                 $close = $m[3];
-                // Xoá t="s" hoặc t="inlineStr" trong opening tag
+                // Xoá attribute t="..." cũ
                 $open  = preg_replace('/\s+t="[^"]*"/','',$open);
 
                 if ($isNum) {
                     return $open.'<v>'.htmlspecialchars($value,ENT_XML1,'UTF-8').'</v>'.$close;
                 } elseif ($hasSS) {
                     $idx = ssGet($value,$ssRaw,$ssIndex,$ssCount);
-                    // Chèn t="s" vào trước dấu >
+                    // Chèn t="s" trước dấu đóng >
                     $open = preg_replace('/>$/',' t="s">',$open);
                     return $open.'<v>'.$idx.'</v>'.$close;
                 } else {
                     $open = preg_replace('/>$/',' t="inlineStr">',$open);
-                    $sp   = (strpos($value,"\n")!==false||$value!==trim($value))?' xml:space="preserve"':'';
-                    $esc  = htmlspecialchars($value,ENT_XML1,'UTF-8');
+                    $sp=(strpos($value,"\n")!==false||$value!==trim($value))?' xml:space="preserve"':'';
+                    $esc=htmlspecialchars($value,ENT_XML1,'UTF-8');
                     return $open.'<is><t'.$sp.'>'.$esc.'</t></is>'.$close;
                 }
             },
             $sheet
         );
     } else {
-        // Cell không tồn tại trong template → chèn vào row
         insertCell($sheet,$ssRaw,$ref,$value,$isNum,$hasSS,$ssIndex,$ssCount);
     }
 }
@@ -220,8 +218,8 @@ function ssGet(string $v,string &$ssRaw,array &$ssIndex,int &$ssCount): int {
     $sp=(strpos($v,"\n")!==false||$v!==trim($v))?' xml:space="preserve"':'';
     $esc=htmlspecialchars($v,ENT_XML1,'UTF-8');
     $ssRaw=str_replace('</sst>','<si><t'.$sp.'>'.$esc.'</t></si></sst>',$ssRaw);
-    $ssRaw=preg_replace('/\bcount="\d+"/',"count=\"$ssCount\"",$ssRaw);
-    $ssRaw=preg_replace('/\buniqueCount="\d+"/',"uniqueCount=\"$ssCount\"",$ssRaw);
+    $ssRaw=preg_replace('/\bcount="\d+"/',"count=\"$ssCount\"",$ssRaw,1);
+    $ssRaw=preg_replace('/\buniqueCount="\d+"/',"uniqueCount=\"$ssCount\"",$ssRaw,1);
     return $idx;
 }
 
@@ -239,7 +237,8 @@ function insertCell(
 ): void {
     preg_match('/^([A-Z]+)(\d+)$/',$ref,$m);
     if (!$m) return;
-    $rowNum=(int)$m[2]; $colNum=colToNum2($m[1]);
+    $rowNum=(int)$m[2];
+    $colNum=colToNum2($m[1]);
 
     if ($isNum) {
         $cellXml='<c r="'.$ref.'"><v>'.htmlspecialchars($value,ENT_XML1,'UTF-8').'</v></c>';
@@ -248,56 +247,63 @@ function insertCell(
         $cellXml='<c r="'.$ref.'" t="s"><v>'.$idx.'</v></c>';
     } else {
         $sp=(strpos($value,"\n")!==false||$value!==trim($value))?' xml:space="preserve"':'';
-        $esc=htmlspecialchars($value,ENT_XML1,'UTF-8');
-        $cellXml='<c r="'.$ref.'" t="inlineStr"><is><t'.$sp.'>'.$esc.'</t></is></c>';
+        $cellXml='<c r="'.$ref.'" t="inlineStr"><is><t'.$sp.'>'.htmlspecialchars($value,ENT_XML1,'UTF-8').'</t></is></c>';
     }
 
-    // Tìm row tương ứng
-    $rowPat='/<row\b([^>]*)r="'.$rowNum.'"([^>]*)>(.*?)<\/row>/s';
-    if (preg_match($rowPat,$sheet)) {
-        $sheet=preg_replace_callback($rowPat,
-            function($rm) use ($cellXml,$colNum) {
-                $inner=$rm[3]; $inserted=false;
-                $result=preg_replace_callback(
-                    '/<c\s[^>]*r="([A-Z]+)\d+"[^>]*>.*?<\/c>/s',
-                    function($cm) use ($cellXml,$colNum,&$inserted) {
-                        if (!$inserted) {
-                            preg_match('/^([A-Z]+)/',$cm[1],$cc);
-                            if (colToNum2($cc[1])>$colNum) {
-                                $inserted=true; return $cellXml.$cm[0];
-                            }
+    // Tìm row tương ứng — FIX: capture toàn bộ opening tag đúng cách
+    $rowPat='/<row\b([^>]*)>(.*?)<\/row>/s';
+    $found=false;
+    $sheet=preg_replace_callback($rowPat,
+        function($rm) use ($cellXml,$rowNum,$colNum,&$found) {
+            // Lấy r="N" từ attributes
+            if (!preg_match('/\br="(\d+)"/',$rm[1],$rn)) return $rm[0];
+            if ((int)$rn[1]!==$rowNum) return $rm[0];
+            $found=true;
+            $inner=$rm[2];
+            // Chèn cell vào đúng vị trí cột
+            $inserted=false;
+            $result=preg_replace_callback(
+                '/<c\b[^>]*r="([A-Z]+\d+)"[^>]*>.*?<\/c>/s',
+                function($cm) use ($cellXml,$colNum,&$inserted) {
+                    if (!$inserted) {
+                        preg_match('/^([A-Z]+)/',$cm[1],$cc);
+                        if (colToNum2($cc[1])>$colNum) {
+                            $inserted=true;
+                            return $cellXml.$cm[0];
                         }
-                        return $cm[0];
-                    },$inner
-                );
-                if (!$inserted) $result.=$cellXml;
-                return '<row'.$rm[1].'r="'.(preg_match('/r="(\d+)"/',$rm[0],$rn)?$rn[1]:'')
-                    .'"'.$rm[2].'>'.$result.'</row>';
-            },$sheet);
-    } else {
-        // Row chưa có
+                    }
+                    return $cm[0];
+                },$inner
+            );
+            if (!$inserted) $result.=$cellXml;
+            return '<row'.$rm[1].'>'.$result.'</row>';
+        },$sheet);
+
+    if (!$found) {
+        // Row chưa tồn tại → tạo mới và chèn đúng thứ tự
         $newRow='<row r="'.$rowNum.'">'.$cellXml.'</row>';
-        if (!preg_match('/<row\b[^>]*r="(\d+)"[^>]*>/',$sheet)) {
+        $inserted=false;
+        $sheet=preg_replace_callback(
+            '/<row\b[^>]*\br="(\d+)"[^>]*>/s',
+            function($rm) use ($newRow,$rowNum,&$inserted) {
+                if (!$inserted&&(int)$rm[1]>$rowNum) {
+                    $inserted=true;
+                    return $newRow.$rm[0];
+                }
+                return $rm[0];
+            },$sheet);
+        if (!$inserted) {
             $sheet=str_replace('</sheetData>',$newRow.'</sheetData>',$sheet);
-        } else {
-            $done=false;
-            $sheet=preg_replace_callback(
-                '/<row\b[^>]*r="(\d+)"[^>]*>/s',
-                function($rm) use ($newRow,$rowNum,&$done) {
-                    if (!$done&&(int)$rm[1]>$rowNum) {$done=true;return $newRow.$rm[0];}
-                    return $rm[0];
-                },$sheet);
-            if (!$done) $sheet=str_replace('</sheetData>',$newRow.'</sheetData>',$sheet);
         }
     }
 }
 
-// ── Ghi tất cả cells ───────────────────────────────────
+// Ghi tất cả cells
 foreach ($finalCellMap as $ref=>$value) {
     writeFast($sheetRaw,$ssRaw,$ref,$value,$hasSS,$ssIndex,$ssCount);
 }
 
-// ── Save ZIP ───────────────────────────────────────────
+// Save ZIP
 $zip->addFromString($activeSheet,$sheetRaw);
 if ($hasSS) $zip->addFromString('xl/sharedStrings.xml',$ssRaw);
 $zip->close();
