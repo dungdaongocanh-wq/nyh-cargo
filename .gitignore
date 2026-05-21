@@ -1,0 +1,5 @@
+vendor/ 
+assets/outputs/ 
+assets/templates/ 
+config/database.php 
+.env 
