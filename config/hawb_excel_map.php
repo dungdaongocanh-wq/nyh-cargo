@@ -21,20 +21,20 @@ return [
 
     // ── ROUTING ───────────────────────────────────────────
     'airport_departure' => 'A25',
-    'airport_dest'      => 'A27',
+    'airport_dest'      => ['A27', 'A30'],  // cần phải điền cả 2 ô
     'issuing_carrier'   => 'B27',  // By first carrier (airline name)
 
     // ── FLIGHT ────────────────────────────────────────────
     'flight_no'         => 'G30',
-    'flight_date'       => 'K30',
+    'flight_date'       => ['K30', 'N68'],  // cần phải điền cả 2 ô
 
     // ── HANDLING ──────────────────────────────────────────
     'notify_party'      => '',
     'handling_info'     => 'A33',
 
     // ── WEIGHT & PIECES ───────────────────────────────────
-    'no_of_pieces'      => 'A40',
-    'gross_weight'      => 'B40',
+    'no_of_pieces'      => ['A40', 'A54'],  // cần phải điền cả 2 ô
+    'gross_weight'      => ['B40', 'B54'],  // cần phải điền cả 2 ô
     'chargeable_weight' => 'I40',
 
     // ── COMMODITY ─────────────────────────────────────────
