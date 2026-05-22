@@ -1,33 +1,33 @@
 <?php
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/../config/database.php';
-$hawbMap = require_once __DIR__ . '/../config/hawb_excel_map.php';
 require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/../includes/auth.php';
-
 requireLogin();
+
 if (!isManager()) {
-    setFlash('danger', 'You do not have permission to access HAWB Template.');
+    setFlash('danger', 'Access denied.');
     redirect(BASE_URL . 'index.php');
 }
 
-$uploadError = null;
-$targetDir = __DIR__ . '/../assets/templates/';
-$targetFile = $targetDir . 'hawb_template.xlsx';
+$templateDir  = __DIR__ . '/../assets/templates/';
+$templateFile = $templateDir . 'hawb_template.xlsx';
+$uploadError  = '';
 
+// ── DOWNLOAD ─────────────────────────────────────────────
 if (isset($_GET['download']) && $_GET['download'] === '1') {
-    if (!file_exists($targetFile)) {
+    if (!file_exists($templateFile)) {
         setFlash('danger', 'Template file does not exist.');
         redirect(BASE_URL . 'admin/hawb_template.php');
     }
-
     header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     header('Content-Disposition: attachment; filename="hawb_template.xlsx"');
-    header('Content-Length: ' . (string)filesize($targetFile));
-    readfile($targetFile);
+    header('Content-Length: ' . filesize($templateFile));
+    readfile($templateFile);
     exit;
 }
 
+// ── UPLOAD ───────────────────────────────────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['template_file'])) {
     $file = $_FILES['template_file'];
     $ext  = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
@@ -39,20 +39,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['template_file'])) {
     } elseif ($file['size'] > 10 * 1024 * 1024) {
         $uploadError = 'File size must be under 10MB.';
     } else {
-        if (!is_dir($targetDir)) mkdir($targetDir, 0755, true);
-
-        if (move_uploaded_file($file['tmp_name'], $targetFile)) {
+        if (!is_dir($templateDir)) {
+            mkdir($templateDir, 0755, true);
+        }
+        if (move_uploaded_file($file['tmp_name'], $templateFile)) {
             setFlash('success', 'HAWB Template uploaded successfully.');
             redirect(BASE_URL . 'admin/hawb_template.php');
         } else {
-            $uploadError = 'Failed to save file. Check folder permissions.';
+            $uploadError = 'Failed to save file. Check folder permissions on assets/templates/.';
         }
     }
 }
 
-$templateExists = file_exists($targetFile);
-$templateSizeKb = $templateExists ? round(filesize($targetFile) / 1024, 2) : null;
-$templateMtime  = $templateExists ? date('d/m/Y H:i:s', filemtime($targetFile)) : null;
+// ── FILE STATUS ──────────────────────────────────────────
+$fileExists   = file_exists($templateFile);
+$fileSizeKb   = $fileExists ? round(filesize($templateFile) / 1024, 1) : 0;
+$fileModified = $fileExists ? date('d-M-Y H:i', filemtime($templateFile)) : null;
+
 $pageTitle = 'HAWB Template';
 ?>
 <!DOCTYPE html>
@@ -71,98 +74,170 @@ $pageTitle = 'HAWB Template';
 <?php require_once __DIR__ . '/../includes/sidebar.php'; ?>
 
 <main class="flex-grow-1 p-4">
+
+<!-- Flash -->
 <?php $flash = getFlash(); if ($flash): ?>
 <div class="alert alert-<?= e($flash['type']) ?> alert-dismissible fade show">
     <i class="bi bi-<?= $flash['type']==='success'?'check-circle':'exclamation-triangle' ?> me-2"></i>
-    <?= $flash['message'] ?>
+    <?= e($flash['message']) ?>
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
 <?php endif; ?>
 
+<!-- Upload error -->
 <?php if ($uploadError): ?>
 <div class="alert alert-danger alert-dismissible fade show">
-    <i class="bi bi-exclamation-triangle me-2"></i>
-    <?= e($uploadError) ?>
+    <i class="bi bi-x-circle me-2"></i><?= e($uploadError) ?>
     <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
 </div>
 <?php endif; ?>
 
+<!-- Page header -->
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
-        <h4 class="fw-bold mb-0"><i class="bi bi-file-earmark-excel text-success me-2"></i>HAWB Template</h4>
-        <small class="text-muted">Manage HAWB Excel template used for export.</small>
+        <h4 class="fw-bold mb-0">
+            <i class="bi bi-file-earmark-excel text-success me-2"></i>HAWB Template
+        </h4>
+        <small class="text-muted">Upload file Excel template dùng để xuất HAWB</small>
     </div>
 </div>
 
-<div class="row g-3">
-    <div class="col-12 col-lg-6">
+<div class="row g-4">
+
+    <!-- ── STATUS CARD ───────────────────────────────── -->
+    <div class="col-md-5">
         <div class="card shadow-sm h-100">
-            <div class="card-header bg-white fw-semibold">
-                <i class="bi bi-info-circle me-2 text-primary"></i>Current Template Status
+            <div class="card-header fw-bold py-3">
+                <i class="bi bi-info-circle text-primary me-2"></i>Current Template Status
             </div>
             <div class="card-body">
-                <?php if ($templateExists): ?>
-                    <span class="badge bg-success-subtle text-success-emphasis border border-success-subtle">✅ File exists</span>
-                    <ul class="list-unstyled mt-3 mb-3">
-                        <li class="mb-1"><strong>Path:</strong> <code>assets/templates/hawb_template.xlsx</code></li>
-                        <li class="mb-1"><strong>Size:</strong> <?= number_format((float)$templateSizeKb, 2) ?> KB</li>
-                        <li><strong>Updated:</strong> <?= e($templateMtime) ?></li>
-                    </ul>
-                    <a href="<?= BASE_URL ?>admin/hawb_template.php?download=1" class="btn btn-outline-primary btn-sm">
-                        <i class="bi bi-download me-1"></i>Download Current Template
-                    </a>
+                <?php if ($fileExists): ?>
+                <div class="mb-3">
+                    <span class="badge bg-success fs-6 py-2 px-3">
+                        <i class="bi bi-check-circle me-1"></i>File exists
+                    </span>
+                </div>
+                <table class="table table-sm table-borderless mb-4">
+                    <tr>
+                        <td class="text-muted fw-semibold" style="width:130px;">File name</td>
+                        <td><code>hawb_template.xlsx</code></td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted fw-semibold">Size</td>
+                        <td><?= $fileSizeKb ?> KB</td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted fw-semibold">Last updated</td>
+                        <td><?= $fileModified ?></td>
+                    </tr>
+                    <tr>
+                        <td class="text-muted fw-semibold">Location</td>
+                        <td><code>assets/templates/</code></td>
+                    </tr>
+                </table>
+                <a href="<?= BASE_URL ?>admin/hawb_template.php?download=1"
+                   class="btn btn-outline-success w-100">
+                    <i class="bi bi-download me-2"></i>Download Current Template
+                </a>
                 <?php else: ?>
-                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">⚠️ No template uploaded</span>
-                    <p class="text-muted mt-3 mb-0">
-                        Excel export will not work until <code>hawb_template.xlsx</code> is uploaded.
-                    </p>
+                <div class="mb-3">
+                    <span class="badge bg-warning text-dark fs-6 py-2 px-3">
+                        <i class="bi bi-exclamation-triangle me-1"></i>No template uploaded
+                    </span>
+                </div>
+                <div class="alert alert-warning py-2 small mb-0">
+                    <i class="bi bi-exclamation-triangle-fill me-1"></i>
+                    File <code>assets/templates/hawb_template.xlsx</code> chưa tồn tại.<br>
+                    Chức năng <strong>Export HAWB to Excel</strong> sẽ không hoạt động cho đến khi upload template.
+                </div>
                 <?php endif; ?>
             </div>
         </div>
     </div>
 
-    <div class="col-12 col-lg-6">
+    <!-- ── UPLOAD CARD ───────────────────────────────── -->
+    <div class="col-md-7">
         <div class="card shadow-sm h-100">
-            <div class="card-header bg-white fw-semibold">
-                <i class="bi bi-upload me-2 text-primary"></i>Upload Template
+            <div class="card-header fw-bold py-3">
+                <i class="bi bi-file-earmark-arrow-up text-primary me-2"></i>
+                <?= $fileExists ? 'Replace Template' : 'Upload Template' ?>
             </div>
             <div class="card-body">
-                <p class="text-muted mb-3">
-                    Upload file <code>hawb_template.xlsx</code>. File này sẽ được dùng khi xuất HAWB ra Excel.
-                </p>
+                <div class="alert alert-info py-2 small mb-4">
+                    <i class="bi bi-lightbulb me-1"></i>
+                    Upload file <strong>hawb_template.xlsx</strong> — đây là file Excel template dùng khi xuất HAWB bill.
+                    <?= $fileExists ? 'File cũ sẽ bị thay thế hoàn toàn.' : '' ?>
+                </div>
+
                 <form method="POST" enctype="multipart/form-data" id="uploadForm">
                     <div class="mb-3">
-                        <input type="file" class="form-control" id="templateFile" name="template_file" accept=".xlsx" required>
-                        <div class="form-text">Accepted format: <code>.xlsx</code> (max 10MB)</div>
+                        <label class="form-label fw-semibold">
+                            <i class="bi bi-file-earmark-excel text-success me-1"></i>
+                            Chọn file Template (.xlsx)
+                        </label>
+                        <input type="file"
+                               name="template_file"
+                               id="templateFile"
+                               class="form-control"
+                               accept=".xlsx"
+                               required>
+                        <div class="form-text">
+                            Chỉ chấp nhận file <code>.xlsx</code>. Kích thước tối đa: <strong>10 MB</strong>.
+                        </div>
                     </div>
-                    <button type="submit" class="btn btn-primary">
-                        <i class="bi bi-cloud-arrow-up me-1"></i>Upload Template
+
+                    <!-- File preview -->
+                    <div id="filePreview" class="alert alert-light border d-none mb-3 py-2 small">
+                        <i class="bi bi-file-earmark-excel text-success me-1"></i>
+                        <span id="previewName"></span>
+                        <span class="text-muted ms-2" id="previewSize"></span>
+                    </div>
+
+                    <button type="submit" class="btn btn-primary w-100 py-2 fw-semibold">
+                        <i class="bi bi-cloud-upload me-2"></i>Upload Template
                     </button>
                 </form>
             </div>
         </div>
     </div>
-</div>
 
+</div>
 </main>
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-document.getElementById('uploadForm').addEventListener('submit', function (event) {
-    const fileInput = document.getElementById('templateFile');
-    const file = fileInput.files[0];
-    if (!file) return;
+document.getElementById('templateFile').addEventListener('change', function () {
+    const file = this.files[0];
+    const preview = document.getElementById('filePreview');
+    if (!file) { preview.classList.add('d-none'); return; }
+
+    document.getElementById('previewName').textContent = file.name;
+    document.getElementById('previewSize').textContent = '(' + (file.size / 1024).toFixed(1) + ' KB)';
+    preview.classList.remove('d-none', 'alert-danger', 'alert-light');
 
     if (!file.name.toLowerCase().endsWith('.xlsx')) {
-        event.preventDefault();
-        fileInput.setCustomValidity('Only .xlsx files are accepted.');
-        fileInput.reportValidity();
-        return;
+        preview.classList.add('alert-danger');
+    } else {
+        preview.classList.add('alert-light');
     }
-
-    fileInput.setCustomValidity('');
 });
+
+document.getElementById('uploadForm').addEventListener('submit', function (e) {
+    const input = document.getElementById('templateFile');
+    if (input.files[0] && !input.files[0].name.toLowerCase().endsWith('.xlsx')) {
+        e.preventDefault();
+        input.setCustomValidity('Only .xlsx files are accepted.');
+        input.reportValidity();
+    } else {
+        input.setCustomValidity('');
+    }
+});
+
+setTimeout(() => {
+    document.querySelectorAll('.alert-dismissible').forEach(el =>
+        bootstrap.Alert.getOrCreateInstance(el).close());
+}, 5000);
 </script>
 </body>
 </html>
