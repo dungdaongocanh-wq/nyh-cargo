@@ -151,13 +151,14 @@ $currentPath = $_SERVER['PHP_SELF'];
             <?php endif; ?>
 
             <!-- ===== ADMINISTRATION ===== -->
-            <?php if (isAdmin()): ?>
+            <?php if (isManager()): ?>
             <li class="nav-item mt-3">
                 <div class="px-3 mb-1" style="font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#6c757d;">
                     Administration
                 </div>
             </li>
 
+            <?php if (isAdmin()): ?>
             <!-- Accounts -->
             <li class="nav-item">
                 <a class="nav-link d-flex align-items-center gap-2 rounded-2 px-3 py-2
@@ -165,6 +166,17 @@ $currentPath = $_SERVER['PHP_SELF'];
                    href="<?= BASE_URL ?>admin/accounts.php">
                     <i class="bi bi-person-gear"></i>
                     <span>Accounts</span>
+                </a>
+            </li>
+            <?php endif; ?>
+
+            <!-- HAWB Template Upload -->
+            <li class="nav-item">
+                <a class="nav-link d-flex align-items-center gap-2 rounded-2 px-3 py-2
+                    <?= $currentPage === 'hawb_template.php' ? 'active' : '' ?>"
+                   href="<?= BASE_URL ?>admin/hawb_template.php">
+                    <i class="bi bi-file-earmark-arrow-up"></i>
+                    <span>HAWB Template</span>
                 </a>
             </li>
             <?php endif; ?>
