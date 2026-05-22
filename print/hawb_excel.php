@@ -332,6 +332,7 @@ $db->query("UPDATE hawbs SET is_printed=1,printed_at=NOW() WHERE id=$hid");
 
 $filename='HAWB_'.$safeNo.'.xlsx';
 while (ob_get_level()>0) ob_end_clean();
+clearstatcache(true, $outputFile);
 header('Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
 header('Content-Disposition: attachment; filename="'.$filename.'"');
 header('Content-Length: '.filesize($outputFile));
@@ -339,6 +340,7 @@ header('Cache-Control: no-store,no-cache,must-revalidate');
 header('Pragma: no-cache');
 header('Expires: 0');
 $fp=fopen($outputFile,'rb');
+if (!$fp) { @unlink($outputFile); exit; }
 while(!feof($fp)){echo fread($fp,8192);flush();}
 fclose($fp);
 @unlink($outputFile);
