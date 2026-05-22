@@ -326,6 +326,7 @@ foreach ($finalCellMap as $ref=>$value) {
 // Save ZIP
 $zip->addFromString($activeSheet,$sheetRaw);
 if ($hasSS) $zip->addFromString('xl/sharedStrings.xml',$ssRaw);
+$zip->deleteName('xl/calcChain.xml'); // Remove stale formula chain — always safe
 $zip->close();
 
 $db->query("UPDATE hawbs SET is_printed=1,printed_at=NOW() WHERE id=$hid");
