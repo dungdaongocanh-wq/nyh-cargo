@@ -11,7 +11,13 @@ ini_set('memory_limit', '128M');
 
 $db  = getDB();
 $hid = (int)($_GET['id'] ?? 0);
-if (!$hid) die('Invalid HAWB ID.');
+function failExport(int $hid, string $message, ?string $outputFile = null): void {
+    if ($outputFile && is_file($outputFile)) @unlink($outputFile);
+    setFlash('danger', $message);
+    header('Location: ../operations/hawb/edit.php?id='.$hid.'&err='.urlencode($message));
+    exit;
+}
+if (!$hid) failExport(0, 'Thiếu ID HAWB hợp lệ.');
 
 $stmt = $db->prepare("
     SELECT h.*,
@@ -37,8 +43,11 @@ $stmt->bind_param('i', $hid);
 $stmt->execute();
 $h = $stmt->get_result()->fetch_assoc();
 $stmt->close();
-if (!$h) die('HAWB not found.');
+if (!$h) failExport($hid, 'Không tìm thấy HAWB.');
 $h = array_map(fn($v) => $v === null ? '' : (string)$v, $h);
+if ((int)$h['is_weighed'] === 0 || (float)$h['gross_weight'] <= 0) {
+    failExport($hid, 'HAWB chưa cân. Vui lòng cân hàng trước khi xuất Excel.');
+}
 
 $dimGroups = $db->query("
     SELECT length, width, height, qty_pieces
@@ -46,9 +55,9 @@ $dimGroups = $db->query("
 ")->fetch_all(MYSQLI_ASSOC);
 
 $templateFile = __DIR__ . '/../assets/templates/hawb_template.xlsx';
-if (!file_exists($templateFile)) die('Template not found.');
+if (!file_exists($templateFile)) failExport($hid, 'Không tìm thấy template HAWB Excel.');
 $map = require __DIR__ . '/../config/hawb_excel_map.php';
-if (!is_array($map)) die('Invalid cell map.');
+if (!is_array($map)) failExport($hid, 'Cell map HAWB không hợp lệ.');
 
 function fmtNum($v): string {
     if ($v===null||$v==='') return '';
@@ -80,6 +89,7 @@ $cellData=[
     'consignee_phone'   => $h['cnee_phone'],
     'consignee_acct'    => $h['cnee_acct'],
     'consignee_usci'    => $h['cnee_usci'],
+    'notify_party'      => $h['notify_party'],
     'issuing_carrier'   => strtoupper($h['airline_name']),
     'agent_name'        => COMPANY_NAME,
     'agent_iata'        => defined('COMPANY_IATA')?(string)COMPANY_IATA:'',
@@ -97,7 +107,9 @@ $cellData=[
     'amount_insurance'  => $h['amount_insurance']?:'XXX',
     'accounting_info'   => $h['accounting_info']?:'FREIGHT PREPAID',
     'no_of_pieces'      => (string)(int)$h['no_of_pieces'],
+    'no_of_pieces_footer' => (string)(int)$h['no_of_pieces'],
     'gross_weight'      => (float)$h['gross_weight']>0      ? fmtNum($h['gross_weight'])      : '',
+    'gross_weight_footer' => (float)$h['gross_weight']>0    ? fmtNum($h['gross_weight'])      : '',
     'gross_weight_unit' => 'K',
     'volume_weight'     => (float)$h['volume_weight']>0     ? fmtNum($h['volume_weight'])     : '',
     'chargeable_weight' => (float)$h['chargeable_weight']>0 ? fmtNum($h['chargeable_weight']) : '',
@@ -119,22 +131,26 @@ foreach ($map as $field=>$cell) {
     $val=(string)$cellData[$field];
     if ($val!=='') $finalCellMap[$cell]=$val;
 }
-if (empty($finalCellMap)) die('Cell map empty.');
+if (empty($finalCellMap)) failExport($hid, 'Không có cell map hợp lệ để ghi dữ liệu HAWB.');
 
 // Copy template
 $outputDir=__DIR__.'/../assets/outputs/';
 if (!is_dir($outputDir)) mkdir($outputDir,0755,true);
 $safeNo=preg_replace('/[^A-Z0-9]/','',strtoupper($h['hawb_no']));
 $outputFile=$outputDir.'HAWB_'.$safeNo.'_'.date('YmdHis').'.xlsx';
-if (!copy($templateFile,$outputFile)) die('Cannot copy template.');
+if (!copy($templateFile,$outputFile)) failExport($hid, 'Không thể tạo file export từ template.');
 
 // Open ZIP
 $zip=new ZipArchive();
-if ($zip->open($outputFile)!==true){@unlink($outputFile);die('Cannot open zip.');}
+if ($zip->open($outputFile)!==true) failExport($hid, 'Không thể mở file Excel để ghi dữ liệu.', $outputFile);
 
 // Find active sheet
 $wbXml=(string)$zip->getFromName('xl/workbook.xml');
 $wbRels=(string)$zip->getFromName('xl/_rels/workbook.xml.rels');
+if ($wbXml === '' || $wbRels === '') {
+    $zip->close();
+    failExport($hid, 'Template HAWB không hợp lệ (thiếu workbook metadata).', $outputFile);
+}
 $relMap=[];
 preg_match_all('/<Relationship\s[^>]*Id="([^"]*)"[^>]*Target="([^"]*)"/i',$wbRels,$rp,PREG_SET_ORDER);
 foreach ($rp as $r){$t=$r[2];if(strpos($t,'xl/')!==0)$t='xl/'.ltrim($t,'/');$relMap[$r[1]]=$t;}
@@ -144,6 +160,10 @@ preg_match_all('/<sheet\b[^>]*r:id="([^"]*)"/i',$wbXml,$sr,PREG_SET_ORDER);
 $activeRid=$sr[$activeTab][1]??($sr[0][1]??'');
 $activeSheet=$relMap[$activeRid]??'xl/worksheets/sheet1.xml';
 if (!$zip->getFromName($activeSheet)) $activeSheet='xl/worksheets/sheet1.xml';
+if (!$zip->getFromName($activeSheet)) {
+    $zip->close();
+    failExport($hid, 'Không tìm thấy worksheet trong template HAWB.', $outputFile);
+}
 
 // Load sharedStrings
 $ssRaw=$zip->getFromName('xl/sharedStrings.xml');

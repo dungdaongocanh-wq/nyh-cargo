@@ -8,6 +8,8 @@ return [
     'mawb_no'           => 'B1',
     'hawb_no'           => 'Y1',
     'hawb_no_footer'    => 'Y71',
+    'no_of_pieces_footer' => 'A71', // TODO: verify exact footer cell on real template
+    'gross_weight_footer' => 'B71', // TODO: verify exact footer cell on real template
 
     // ── SHIPPER ───────────────────────────────────────────
     'shipper_name'      => 'A4',
@@ -27,6 +29,7 @@ return [
     'flight_date'       => 'K30',
 
     // ── HANDLING ──────────────────────────────────────────
+    'notify_party'      => '', // TODO: map when template has dedicated Notify Party cell
     'handling_info'     => 'A33',
 
     // ── WEIGHT & PIECES ───────────────────────────────────
@@ -53,17 +56,17 @@ return [
     'agent_name'        => '',
     'agent_iata'        => '',
     'routing_to1'       => '',
-    'routing_by1'       => '',
+    'routing_by1'       => 'C27', // By first carrier (airline code)
     'routing_to2'       => '',
     'routing_by2'       => '',
-    'payment_term'      => '',
-    'currency'          => '',
-    'rate_class'        => '',
+    'payment_term'      => '', // TODO: map after confirming payment-term cell on template
+    'currency'          => '', // TODO: map after confirming currency cell on template
+    'rate_class'        => '', // TODO: map after confirming rate-class cell on template
     'commodity_item_no' => '',
-    'declared_carriage' => '',
-    'declared_customs'  => '',
-    'amount_insurance'  => '',
-    'accounting_info'   => '',
+    'declared_carriage' => '', // TODO: map after confirming declared carriage cell on template
+    'declared_customs'  => '', // TODO: map after confirming declared customs cell on template
+    'amount_insurance'  => '', // TODO: map after confirming insurance amount cell on template
+    'accounting_info'   => '', // TODO: map after confirming accounting info cell on template
     'gross_weight_unit' => '',
     'volume_weight'     => '',
     'commodity_line2'   => '',
