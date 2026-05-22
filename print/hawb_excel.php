@@ -135,13 +135,16 @@ $cellData = [
 ];
 
 // Build finalCellMap (UPPERCASE ref => value, chỉ giữ cell có giá trị)
+// Hỗ trợ cả string lẫn array trong map (1 field → nhiều ô)
 $finalCellMap = [];
 foreach ($map as $field => $cell) {
-    if (!is_string($cell)) continue;
-    $cell = strtoupper(trim($cell));
-    if ($cell === '' || !isset($cellData[$field])) continue;
-    $val = (string)$cellData[$field];
-    if ($val !== '') $finalCellMap[$cell] = $val;
+    $cells = is_array($cell) ? $cell : [$cell];
+    foreach ($cells as $c) {
+        $c = strtoupper(trim((string)$c));
+        if ($c === '' || !isset($cellData[$field])) continue;
+        $val = (string)$cellData[$field];
+        if ($val !== '') $finalCellMap[$c] = $val;
+    }
 }
 if (empty($finalCellMap)) failExport($hid, 'Không có cell map hợp lệ để ghi dữ liệu HAWB.');
 
@@ -181,159 +184,219 @@ if (!$zip->getFromName($activeSheet)) {
     failExport($hid, 'Không tìm thấy worksheet trong template HAWB.', $outputFile);
 }
 
-// ── Load raw strings ──────────────────────────────────────────────────────────
+// ── Load raw XML ─────────────────────────────────────────────────────────────
 $sheetRaw = (string)$zip->getFromName($activeSheet);
 $ssRaw    = $zip->getFromName('xl/sharedStrings.xml');
 $hasSS    = (is_string($ssRaw) && strlen($ssRaw) > 0);
 $ssRaw    = $hasSS ? (string)$ssRaw : '';
 
-// Parse sharedStrings index (value → index)
-$ssIndex = [];
-if ($hasSS) {
-    preg_match_all('/<si>(.*?)<\/si>/s', $ssRaw, $siM);
-    foreach ($siM[1] as $idx => $body) {
-        $text = '';
-        preg_match_all('/<t[^>]*>(.*?)<\/t>/s', $body, $tM);
-        foreach ($tM[1] as $t) $text .= html_entity_decode($t, ENT_XML1, 'UTF-8');
-        $ssIndex[$text] = $idx;
-    }
-}
-$ssCount = count($ssIndex);
+// ── Parse sharedStrings bằng DOMDocument ─────────────────────────────────────
+$sharedStrings = [];
+$ssXml         = null;
+$ssValueToIdx  = [];
 
-// ── Helper: get/add shared string ────────────────────────────────────────────
-function ssGet(string $v, string &$ssRaw, array &$ssIndex, int &$ssCount): int {
-    if (isset($ssIndex[$v])) return (int)$ssIndex[$v];
-    $idx = $ssCount++;
-    $ssIndex[$v] = $idx;
-    $sp  = (strpos($v, "\n") !== false || $v !== trim($v)) ? ' xml:space="preserve"' : '';
-    $esc = htmlspecialchars($v, ENT_XML1, 'UTF-8');
-    $ssRaw = str_replace('</sst>', "<si><t{$sp}>{$esc}</t></si></sst>", $ssRaw);
-    $ssRaw = preg_replace('/\bcount="\d+"/',       "count=\"{$ssCount}\"",       $ssRaw, 1);
-    $ssRaw = preg_replace('/\buniqueCount="\d+"/', "uniqueCount=\"{$ssCount}\"", $ssRaw, 1);
+if ($hasSS) {
+    $ssXml = new DOMDocument();
+    $ssXml->loadXML($ssRaw);
+    foreach ($ssXml->getElementsByTagName('si') as $idx => $si) {
+        $text = '';
+        foreach ($si->getElementsByTagName('t') as $t) $text .= $t->nodeValue;
+        $sharedStrings[$idx] = $text;
+    }
+    $ssValueToIdx = array_flip($sharedStrings);
+}
+
+// ── Helper: thêm value vào sharedStrings ─────────────────────────────────────
+function addSharedString(string $value, array &$sharedStrings, array &$ssValueToIdx, ?DOMDocument $ssXml): int {
+    if (isset($ssValueToIdx[$value])) return $ssValueToIdx[$value];
+    $idx                  = count($sharedStrings);
+    $sharedStrings[$idx]  = $value;
+    $ssValueToIdx[$value] = $idx;
+    if ($ssXml) {
+        $sst = $ssXml->getElementsByTagName('sst')->item(0);
+        $si  = $ssXml->createElement('si');
+        $t   = $ssXml->createElement('t');
+        $t->appendChild($ssXml->createTextNode($value));
+        if (strpos($value, "\n") !== false || substr($value, 0, 1) === ' ' || substr($value, -1) === ' ')
+            $t->setAttribute('xml:space', 'preserve');
+        $si->appendChild($t);
+        $sst->appendChild($si);
+        $total = count($sharedStrings);
+        $sst->setAttribute('count',       $total);
+        $sst->setAttribute('uniqueCount', $total);
+    }
     return $idx;
 }
 
-// ── Helper: build cell XML replacement (không có tag <c>) ────────────────────
-function buildCellInner(string $value, bool $isNum, bool $hasSS,
-                        string &$ssRaw, array &$ssIndex, int &$ssCount,
-                        string &$openTag): string {
-    // Xóa t="..." cũ
-    $openTag = preg_replace('/\s+t="[^"]*"/', '', $openTag);
-    if ($isNum) {
-        return $openTag . '<v>' . htmlspecialchars($value, ENT_XML1, 'UTF-8') . '</v>';
-    } elseif ($hasSS) {
-        $idx     = ssGet($value, $ssRaw, $ssIndex, $ssCount);
-        $openTag = preg_replace('/>$/', ' t="s">', $openTag);
-        return $openTag . '<v>' . $idx . '</v>';
-    } else {
-        $openTag = preg_replace('/>$/', ' t="inlineStr">', $openTag);
-        $sp  = (strpos($value, "\n") !== false || $value !== trim($value)) ? ' xml:space="preserve"' : '';
-        $esc = htmlspecialchars($value, ENT_XML1, 'UTF-8');
-        return $openTag . "<is><t{$sp}>{$esc}</t></is>";
-    }
-}
+// ── Parse sheet XML bằng DOMDocument ─────────────────────────────────────────
+$sheetDom = new DOMDocument();
+$sheetDom->loadXML($sheetRaw);
 
-// ── SINGLE-PASS: thay tất cả cells trong 1 lần regex ─────────────────────────
-// Xây pattern khớp bất kỳ <c r="REF"...>...</c> với REF nằm trong finalCellMap
-$refsPattern = implode('|', array_map('preg_quote', array_keys($finalCellMap)));
+// ── Bước 1: Ghi các cell ĐÃ TỒN TẠI trong sheet ─────────────────────────────
 $writtenRefs = [];
+$cellNodes   = $sheetDom->getElementsByTagName('c');
 
-$sheetRaw = preg_replace_callback(
-    '/(<c\b[^>]*\br="(' . $refsPattern . ')(?=[\s">])[^>]*>)(.*?)(<\/c>)/s',
-    function ($m) use (&$finalCellMap, &$ssRaw, $hasSS, &$ssIndex, &$ssCount, &$writtenRefs) {
-        $ref = strtoupper($m[2]);
-        if (!isset($finalCellMap[$ref])) return $m[0]; // không phải cell cần ghi
-        $writtenRefs[$ref] = true;
-        $value   = $finalCellMap[$ref];
-        $isNum   = is_numeric($value) && strpos($value, "\n") === false;
-        $openTag = $m[1];
-        $close   = $m[4];
-        return buildCellInner($value, $isNum, $hasSS, $ssRaw, $ssIndex, $ssCount, $openTag) . $close;
-    },
-    $sheetRaw
-);
+// Snapshot vào mảng để tránh lỗi live NodeList khi sửa DOM
+$cellNodeList = [];
+foreach ($cellNodes as $cn) $cellNodeList[] = $cn;
 
-// ── INSERT cells chưa tồn tại trong template (cell trống hoàn toàn) ───────────
-function colToNum2(string $col): int {
-    $r = 0;
-    for ($i = 0, $len = strlen($col); $i < $len; $i++)
-        $r = $r * 26 + (ord($col[$i]) - 64);
-    return $r;
+foreach ($cellNodeList as $cellNode) {
+    $ref = strtoupper($cellNode->getAttribute('r'));
+    if (!isset($finalCellMap[$ref])) continue;
+
+    $value             = (string)$finalCellMap[$ref];
+    $writtenRefs[$ref] = true;
+
+    $toRemove = [];
+    foreach ($cellNode->childNodes as $child) {
+        if (in_array($child->nodeName, ['v', 'is'])) $toRemove[] = $child;
+    }
+    foreach ($toRemove as $node) $cellNode->removeChild($node);
+
+    if ($value === '') { $cellNode->removeAttribute('t'); continue; }
+
+    $isNumeric = is_numeric($value) && strpos($value, "\n") === false;
+    if ($isNumeric) {
+        $cellNode->removeAttribute('t');
+        $cellNode->appendChild($sheetDom->createElement('v', $value));
+    } elseif ($hasSS) {
+        $idx = addSharedString($value, $sharedStrings, $ssValueToIdx, $ssXml);
+        $cellNode->setAttribute('t', 's');
+        $cellNode->appendChild($sheetDom->createElement('v', (string)$idx));
+    } else {
+        $cellNode->setAttribute('t', 'inlineStr');
+        $is = $sheetDom->createElement('is');
+        $t  = $sheetDom->createElement('t');
+        $t->appendChild($sheetDom->createTextNode($value));
+        if (strpos($value, "\n") !== false) $t->setAttribute('xml:space', 'preserve');
+        $is->appendChild($t);
+        $cellNode->appendChild($is);
+    }
 }
 
+// ── Bước 2: Tạo mới các cell CHƯA TỒN TẠI (nhóm theo row, 1 lần) ────────────
+$missingCells = [];
 foreach ($finalCellMap as $ref => $value) {
-    if (isset($writtenRefs[$ref])) continue; // đã ghi ở pass trên
+    if (isset($writtenRefs[$ref])) continue;
+    if ($value === '') continue;
+    $missingCells[$ref] = (string)$value;
+}
 
-    $isNum = is_numeric($value) && strpos($value, "\n") === false;
-    if ($isNum) {
-        $cellXml = '<c r="' . $ref . '"><v>' . htmlspecialchars($value, ENT_XML1, 'UTF-8') . '</v></c>';
-    } elseif ($hasSS) {
-        $idx     = ssGet($value, $ssRaw, $ssIndex, $ssCount);
-        $cellXml = '<c r="' . $ref . '" t="s"><v>' . $idx . '</v></c>';
-    } else {
-        $sp      = (strpos($value, "\n") !== false || $value !== trim($value)) ? ' xml:space="preserve"' : '';
-        $cellXml = '<c r="' . $ref . '" t="inlineStr"><is><t' . $sp . '>'
-                 . htmlspecialchars($value, ENT_XML1, 'UTF-8') . '</t></is></c>';
+if (!empty($missingCells)) {
+    // Nhóm theo row number
+    $cellsByRow = [];
+    foreach ($missingCells as $ref => $value) {
+        preg_match('/^([A-Z]+)(\d+)$/', $ref, $m);
+        if (!$m) continue;
+        $cellsByRow[(int)$m[2]][$ref] = $value;
     }
 
-    preg_match('/^([A-Z]+)(\d+)$/', $ref, $m);
-    if (!$m) continue;
-    $rowNum = (int)$m[2];
-    $colNum = colToNum2($m[1]);
+    $sheetDataNodes = $sheetDom->getElementsByTagName('sheetData');
+    if ($sheetDataNodes->length > 0) {
+        $sheetData = $sheetDataNodes->item(0);
 
-    // Tìm row tương ứng và chèn cell đúng vị trí
-    $found  = false;
-    $sheetRaw = preg_replace_callback(
-        '/<row\b([^>]*)>(.*?)<\/row>/s',
-        function ($rm) use ($cellXml, $rowNum, $colNum, &$found) {
-            if (!preg_match('/\br="(\d+)"/', $rm[1], $rn)) return $rm[0];
-            if ((int)$rn[1] !== $rowNum) return $rm[0];
-            $found   = true;
-            $inner   = $rm[2];
-            $inserted = false;
-            $result  = preg_replace_callback(
-                '/<c\b[^>]*r="([A-Z]+\d+)"[^>]*>.*?<\/c>/s',
-                function ($cm) use ($cellXml, $colNum, &$inserted) {
-                    if (!$inserted) {
-                        preg_match('/^([A-Z]+)/', $cm[1], $cc);
-                        if (colToNum2($cc[1]) > $colNum) {
-                            $inserted = true;
-                            return $cellXml . $cm[0];
-                        }
-                    }
-                    return $cm[0];
-                },
-                $inner
-            );
-            if (!$inserted) $result .= $cellXml;
-            return '<row' . $rm[1] . '>' . $result . '</row>';
-        },
-        $sheetRaw
-    );
+        // Snapshot danh sách row hiện có
+        $existingRows = [];
+        foreach ($sheetData->childNodes as $child) {
+            if ($child->nodeName === 'row')
+                $existingRows[(int)$child->getAttribute('r')] = $child;
+        }
 
-    if (!$found) {
-        // Row chưa tồn tại → tạo mới
-        $newRow   = '<row r="' . $rowNum . '">' . $cellXml . '</row>';
-        $inserted = false;
-        $sheetRaw = preg_replace_callback(
-            '/<row\b[^>]*\br="(\d+)"[^>]*>/s',
-            function ($rm) use ($newRow, $rowNum, &$inserted) {
-                if (!$inserted && (int)$rm[1] > $rowNum) {
-                    $inserted = true;
-                    return $newRow . $rm[0];
+        foreach ($cellsByRow as $rowNum => $cells) {
+            if (isset($existingRows[$rowNum])) {
+                // Row đã tồn tại → chèn cell mới vào đúng vị trí theo thứ tự cột
+                $rowNode    = $existingRows[$rowNum];
+                $existingCs = [];
+                foreach ($rowNode->childNodes as $cn) {
+                    if ($cn->nodeName === 'c')
+                        $existingCs[strtoupper($cn->getAttribute('r'))] = $cn;
                 }
-                return $rm[0];
-            },
-            $sheetRaw
-        );
-        if (!$inserted)
-            $sheetRaw = str_replace('</sheetData>', $newRow . '</sheetData>', $sheetRaw);
+
+                foreach ($cells as $ref => $value) {
+                    if (isset($existingCs[$ref])) {
+                        $cn = $existingCs[$ref];
+                    } else {
+                        $cn = $sheetDom->createElement('c');
+                        $cn->setAttribute('r', $ref);
+                        preg_match('/^([A-Z]+)/', $ref, $colM);
+                        $newColNum = colToNum($colM[1]);
+                        $inserted  = false;
+                        foreach ($rowNode->childNodes as $sibling) {
+                            if ($sibling->nodeName !== 'c') continue;
+                            preg_match('/^([A-Z]+)/', $sibling->getAttribute('r'), $sibColM);
+                            if (colToNum($sibColM[1]) > $newColNum) {
+                                $rowNode->insertBefore($cn, $sibling);
+                                $inserted = true;
+                                break;
+                            }
+                        }
+                        if (!$inserted) $rowNode->appendChild($cn);
+                    }
+
+                    $isNumeric = is_numeric($value) && strpos($value, "\n") === false;
+                    if ($isNumeric) {
+                        $cn->removeAttribute('t');
+                        $cn->appendChild($sheetDom->createElement('v', $value));
+                    } elseif ($hasSS) {
+                        $idx = addSharedString($value, $sharedStrings, $ssValueToIdx, $ssXml);
+                        $cn->setAttribute('t', 's');
+                        $cn->appendChild($sheetDom->createElement('v', (string)$idx));
+                    } else {
+                        $cn->setAttribute('t', 'inlineStr');
+                        $is = $sheetDom->createElement('is');
+                        $t  = $sheetDom->createElement('t');
+                        $t->appendChild($sheetDom->createTextNode($value));
+                        if (strpos($value, "\n") !== false) $t->setAttribute('xml:space', 'preserve');
+                        $is->appendChild($t);
+                        $cn->appendChild($is);
+                    }
+                }
+            } else {
+                // Row chưa tồn tại → tạo row mới
+                $newRow = $sheetDom->createElement('row');
+                $newRow->setAttribute('r', $rowNum);
+
+                foreach ($cells as $ref => $value) {
+                    $cn = $sheetDom->createElement('c');
+                    $cn->setAttribute('r', $ref);
+                    $isNumeric = is_numeric($value) && strpos($value, "\n") === false;
+                    if ($isNumeric) {
+                        $cn->appendChild($sheetDom->createElement('v', $value));
+                    } elseif ($hasSS) {
+                        $idx = addSharedString($value, $sharedStrings, $ssValueToIdx, $ssXml);
+                        $cn->setAttribute('t', 's');
+                        $cn->appendChild($sheetDom->createElement('v', (string)$idx));
+                    } else {
+                        $cn->setAttribute('t', 'inlineStr');
+                        $is = $sheetDom->createElement('is');
+                        $t  = $sheetDom->createElement('t');
+                        $t->appendChild($sheetDom->createTextNode($value));
+                        if (strpos($value, "\n") !== false) $t->setAttribute('xml:space', 'preserve');
+                        $is->appendChild($t);
+                        $cn->appendChild($is);
+                    }
+                    $newRow->appendChild($cn);
+                }
+
+                // Chèn row vào đúng vị trí theo thứ tự row number
+                $inserted = false;
+                foreach ($sheetData->childNodes as $sibling) {
+                    if ($sibling->nodeName !== 'row') continue;
+                    if ((int)$sibling->getAttribute('r') > $rowNum) {
+                        $sheetData->insertBefore($newRow, $sibling);
+                        $inserted = true;
+                        break;
+                    }
+                }
+                if (!$inserted) $sheetData->appendChild($newRow);
+            }
+        }
     }
 }
 
 // ── Save ZIP ──────────────────────────────────────────────────────────────────
-$zip->addFromString($activeSheet, $sheetRaw);
-if ($hasSS) $zip->addFromString('xl/sharedStrings.xml', $ssRaw);
+$zip->addFromString($activeSheet, $sheetDom->saveXML());
+if ($hasSS && $ssXml) $zip->addFromString('xl/sharedStrings.xml', $ssXml->saveXML());
 // Xóa calcChain stale — Excel tự rebuild, tránh lỗi "#VALUE" khi mở
 $zip->deleteName('xl/calcChain.xml');
 $zip->close();
