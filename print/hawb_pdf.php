@@ -14,13 +14,14 @@ $hid = (int)($_GET['id'] ?? 0);
 
 function failExport(int $hid, string $message, ?string $outputFile = null, ?string $pdfFile = null): void {
     if ($outputFile && is_file($outputFile)) @unlink($outputFile);
-    if ($pdfFile && is_file($pdfFile)) @unlink($pdfFile);
+    if ($pdfFile    && is_file($pdfFile))    @unlink($pdfFile);
     setFlash('danger', $message);
     header('Location: ../operations/hawb/edit.php?id=' . $hid . '&err=' . urlencode($message));
     exit;
 }
 if (!$hid) failExport(0, 'Thiếu ID HAWB hợp lệ.');
 
+// ── Query ────────────────────────────────────────────────────────────────────
 $stmt = $db->prepare("
     SELECT h.*,
            s.name    AS shipper_name,    s.address  AS shipper_address,
@@ -29,7 +30,9 @@ $stmt = $db->prepare("
            cn.city   AS cnee_city,       cn.phone   AS cnee_phone,
            cn.usci_no AS cnee_usci,      cn.account_no AS cnee_acct,
            ap1.iata_code AS origin_code,
+           ap1.name      AS origin_fullname,
            ap2.iata_code AS dest_code,
+           ap2.name      AS dest_fullname,
            m.mawb_no, m.flight_no, m.flight_date,
            al.code AS airline_code, al.name AS airline_name
     FROM hawbs h
@@ -56,11 +59,13 @@ $dimGroups = $db->query("
     FROM hawb_dim_groups WHERE hawb_id={$hid} ORDER BY id
 ")->fetch_all(MYSQLI_ASSOC);
 
+// ── Template & map ───────────────────────────────────────────────────────────
 $templateFile = __DIR__ . '/../assets/templates/hawb_template.xlsx';
 if (!file_exists($templateFile)) failExport($hid, 'Không tìm thấy template HAWB Excel.');
 $map = require __DIR__ . '/../config/hawb_excel_map.php';
 if (!is_array($map)) failExport($hid, 'Cell map HAWB không hợp lệ.');
 
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function fmtNum($v): string {
     if ($v === null || $v === '') return '';
     $f = (float)$v;
@@ -73,6 +78,7 @@ function colToNum(string $col): int {
     return $r;
 }
 
+// ── Build cellData ───────────────────────────────────────────────────────────
 $dimParts = [];
 foreach ($dimGroups as $dg) {
     $l  = fmtNum($dg['length']); $w = fmtNum($dg['width']);
@@ -84,53 +90,56 @@ if ($h['notify_party']  !== '') $hp[] = $h['notify_party'];
 if ($h['handling_info'] !== '') $hp[] = $h['handling_info'];
 
 $cellData = [
-    'mawb_no'             => $h['mawb_no'],
-    'hawb_no'             => $h['hawb_no'],
-    'hawb_no_footer'      => $h['hawb_no'],
-    'shipper_name'        => strtoupper($h['shipper_name']),
-    'shipper_address'     => strtoupper($h['shipper_address']),
-    'shipper_city'        => strtoupper($h['shipper_city']),
-    'shipper_phone'       => $h['shipper_phone'],
-    'consignee_name'      => strtoupper($h['cnee_name']),
-    'consignee_address'   => strtoupper($h['cnee_address']),
-    'consignee_city'      => strtoupper($h['cnee_city']),
-    'consignee_phone'     => $h['cnee_phone'],
-    'consignee_acct'      => $h['cnee_acct'],
-    'consignee_usci'      => $h['cnee_usci'],
-    'notify_party'        => $h['notify_party'],
-    'issuing_carrier'     => strtoupper($h['airline_name']),
-    'agent_name'          => COMPANY_NAME,
-    'agent_iata'          => defined('COMPANY_IATA') ? (string)COMPANY_IATA : '',
-    'airport_departure'   => $h['origin_code'],
-    'airport_dest'        => $h['dest_code'],
-    'routing_by1'         => $h['airline_code'],
-    'flight_no'           => $h['flight_no'],
-    'flight_date'         => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
-    'payment_term'        => $h['payment_term']            ?: 'PP',
-    'currency'            => $h['currency']                ?: 'USD',
-    'rate_class'          => $h['rate_class']              ?: 'Q',
-    'commodity_item_no'   => $h['commodity_item_no'],
-    'declared_carriage'   => $h['declared_value_carriage'] ?: 'NVD',
-    'declared_customs'    => $h['declared_value_customs']  ?: 'AS PER INV',
-    'amount_insurance'    => $h['amount_insurance']        ?: 'XXX',
-    'accounting_info'     => $h['accounting_info']         ?: 'FREIGHT PREPAID',
-    'no_of_pieces'        => (string)(int)$h['no_of_pieces'],
-    'no_of_pieces_footer' => (string)(int)$h['no_of_pieces'],
-    'gross_weight'        => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
-    'gross_weight_footer' => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
-    'gross_weight_unit'   => 'K',
-    'volume_weight'       => (float)$h['volume_weight']     > 0 ? fmtNum($h['volume_weight'])     : '',
-    'chargeable_weight'   => (float)$h['chargeable_weight'] > 0 ? fmtNum($h['chargeable_weight']) : '',
-    'commodity_line1'     => $h['commodity'],
-    'commodity_line2' => '', 'commodity_line3' => '',
-    'commodity_line4' => '', 'commodity_line5' => '',
-    'dim_info'            => implode('  ', $dimParts),
-    'handling_info'       => implode("\n", $hp),
-    'execution_place'     => $h['origin_code'],
-    'execution_date'      => date('d-M-Y'),
-    'signature_origin'    => COMPANY_NAME,
+    'mawb_no'               => $h['mawb_no'],
+    'hawb_no'               => $h['hawb_no'],
+    'hawb_no_footer'        => $h['hawb_no'],
+    'shipper_name'          => strtoupper($h['shipper_name']),
+    'shipper_address'       => strtoupper($h['shipper_address']),
+    'shipper_city'          => strtoupper($h['shipper_city']),
+    'shipper_phone'         => $h['shipper_phone'],
+    'consignee_name'        => strtoupper($h['cnee_name']),
+    'consignee_address'     => strtoupper($h['cnee_address']),
+    'consignee_city'        => strtoupper($h['cnee_city']),
+    'consignee_phone'       => $h['cnee_phone'],
+    'consignee_acct'        => $h['cnee_acct'],
+    'consignee_usci'        => $h['cnee_usci'],
+    'notify_party'          => $h['notify_party'],
+    'issuing_carrier'       => strtoupper($h['airline_code']),
+    'agent_name'            => COMPANY_NAME,
+    'agent_iata'            => defined('COMPANY_IATA') ? (string)COMPANY_IATA : '',
+    'airport_departure'     => $h['origin_fullname'],
+    'airport_dest'          => $h['dest_code'],
+    'airport_dest_fullname' => $h['dest_fullname'],
+    'routing_by1'           => $h['airline_code'],
+    'flight_no'             => $h['flight_no'],
+    'flight_date'           => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
+    'flight_date_footer'    => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
+    'payment_term'          => $h['payment_term']            ?: 'PP',
+    'currency'              => $h['currency']                ?: 'USD',
+    'rate_class'            => $h['rate_class']              ?: 'Q',
+    'commodity_item_no'     => $h['commodity_item_no'],
+    'declared_carriage'     => $h['declared_value_carriage'] ?: 'NVD',
+    'declared_customs'      => $h['declared_value_customs']  ?: 'AS PER INV',
+    'amount_insurance'      => $h['amount_insurance']        ?: 'XXX',
+    'accounting_info'       => $h['accounting_info']         ?: 'FREIGHT PREPAID',
+    'no_of_pieces'          => (string)(int)$h['no_of_pieces'],
+    'no_of_pieces_footer'   => (string)(int)$h['no_of_pieces'],
+    'gross_weight'          => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
+    'gross_weight_footer'   => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
+    'gross_weight_unit'     => 'K',
+    'volume_weight'         => (float)$h['volume_weight']     > 0 ? fmtNum($h['volume_weight'])     : '',
+    'chargeable_weight'     => (float)$h['chargeable_weight'] > 0 ? fmtNum($h['chargeable_weight']) : '',
+    'commodity_line1'       => $h['commodity'],
+    'commodity_line2'       => '', 'commodity_line3' => '',
+    'commodity_line4'       => '', 'commodity_line5' => '',
+    'dim_info'              => implode('  ', $dimParts),
+    'handling_info'         => implode("\n", $hp),
+    'execution_place'       => $h['origin_code'],
+    'execution_date'        => date('d-M-Y'),
+    'signature_origin'      => COMPANY_NAME,
 ];
 
+// ── Build finalCellMap ───────────────────────────────────────────────────────
 $finalCellMap = [];
 foreach ($map as $field => $cell) {
     $cells = is_array($cell) ? $cell : [$cell];
@@ -143,15 +152,18 @@ foreach ($map as $field => $cell) {
 }
 if (empty($finalCellMap)) failExport($hid, 'Không có cell map hợp lệ để ghi dữ liệu HAWB.');
 
-$outputDir = __DIR__ . '/../assets/outputs/';
+// ── Copy template ─────────────────────────────────────────────────────────────
+$outputDir = rtrim(__DIR__ . '/../assets/outputs', '/\\');
 if (!is_dir($outputDir)) mkdir($outputDir, 0755, true);
 $safeNo     = preg_replace('/[^A-Z0-9]/', '', strtoupper($h['hawb_no']));
-$outputFile = $outputDir . 'HAWB_' . $safeNo . '_' . date('YmdHis') . '.xlsx';
+$outputFile = $outputDir . DIRECTORY_SEPARATOR . 'HAWB_' . $safeNo . '_' . date('YmdHis') . '.xlsx';
 if (!copy($templateFile, $outputFile)) failExport($hid, 'Không thể tạo file export từ template.');
 
+// ── Open ZIP ──────────────────────────────────────────────────────────────────
 $zip = new ZipArchive();
 if ($zip->open($outputFile) !== true) failExport($hid, 'Không thể mở file Excel để ghi dữ liệu.', $outputFile);
 
+// ── Find active sheet ─────────────────────────────────────────────────────────
 $wbXml  = (string)$zip->getFromName('xl/workbook.xml');
 $wbRels = (string)$zip->getFromName('xl/_rels/workbook.xml.rels');
 if ($wbXml === '' || $wbRels === '') {
@@ -176,11 +188,13 @@ if (!$zip->getFromName($activeSheet)) {
     failExport($hid, 'Không tìm thấy worksheet trong template HAWB.', $outputFile);
 }
 
+// ── Load raw XML ─────────────────────────────────────────────────────────────
 $sheetRaw = (string)$zip->getFromName($activeSheet);
 $ssRaw    = $zip->getFromName('xl/sharedStrings.xml');
 $hasSS    = (is_string($ssRaw) && strlen($ssRaw) > 0);
 $ssRaw    = $hasSS ? (string)$ssRaw : '';
 
+// ── Parse sharedStrings ───────────────────────────────────────────────────────
 $sharedStrings = [];
 $ssXml         = null;
 $ssValueToIdx  = [];
@@ -211,17 +225,20 @@ function addSharedString(string $value, array &$sharedStrings, array &$ssValueTo
         $si->appendChild($t);
         $sst->appendChild($si);
         $total = count($sharedStrings);
-        $sst->setAttribute('count', $total);
+        $sst->setAttribute('count',       $total);
         $sst->setAttribute('uniqueCount', $total);
     }
     return $idx;
 }
 
+// ── Parse sheet XML ───────────────────────────────────────────────────────────
 $sheetDom = new DOMDocument();
 $sheetDom->loadXML($sheetRaw);
 
+// ── Bước 1: Ghi các cell ĐÃ TỒN TẠI — dùng XPath ────────────────────────────
 $writtenRefs = [];
 $xpath       = new DOMXPath($sheetDom);
+
 foreach ($finalCellMap as $ref => $value) {
     $nodes = $xpath->query("//*[local-name()='c'][@r='" . $ref . "']");
     if ($nodes->length === 0) continue;
@@ -235,10 +252,7 @@ foreach ($finalCellMap as $ref => $value) {
     }
     foreach ($toRemove as $node) $cellNode->removeChild($node);
 
-    if ($value === '') {
-        $cellNode->removeAttribute('t');
-        continue;
-    }
+    if ($value === '') { $cellNode->removeAttribute('t'); continue; }
 
     $isNumeric = is_numeric($value) && strpos($value, "\n") === false;
     if ($isNumeric) {
@@ -259,6 +273,7 @@ foreach ($finalCellMap as $ref => $value) {
     }
 }
 
+// ── Bước 2: Tạo mới các cell CHƯA TỒN TẠI ───────────────────────────────────
 $missingCells = [];
 foreach ($finalCellMap as $ref => $value) {
     if (isset($writtenRefs[$ref])) continue;
@@ -276,8 +291,7 @@ if (!empty($missingCells)) {
 
     $sheetDataNodes = $sheetDom->getElementsByTagName('sheetData');
     if ($sheetDataNodes->length > 0) {
-        $sheetData = $sheetDataNodes->item(0);
-
+        $sheetData    = $sheetDataNodes->item(0);
         $existingRows = [];
         foreach ($sheetData->childNodes as $child) {
             if ($child->nodeName === 'row')
@@ -373,17 +387,54 @@ if (!empty($missingCells)) {
     }
 }
 
-$zip->addFromString($activeSheet, $sheetDom->saveXML());
+// ── Save ZIP ──────────────────────────────────────────────────────────────────
+$newSheetData = $sheetDom->saveXML($sheetDom->documentElement);
+$zip->addFromString($activeSheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' . "\n" . $newSheetData);
 if ($hasSS && $ssXml) $zip->addFromString('xl/sharedStrings.xml', $ssXml->saveXML());
 $zip->deleteName('xl/calcChain.xml');
 $zip->close();
 unset($zip);
 
-$soffice = 'C:\\Program Files\\LibreOffice\\program\\soffice.exe';
-$cmd = '"' . $soffice . '" --headless --convert-to pdf --outdir "'
-    . addslashes($outputDir) . '" "' . addslashes($outputFile) . '" 2>&1';
-shell_exec($cmd);
-$pdfFile = $outputDir . pathinfo($outputFile, PATHINFO_FILENAME) . '.pdf';
+// ── Convert xlsx → PDF bằng LibreOffice (proc_open, không trailing backslash) ─
+$soffice   = 'C:\\Program Files\\LibreOffice\\program\\soffice.exe';
+$outDirWin = rtrim(str_replace('/', '\\', realpath($outputDir)), '\\');
+$xlsxWin   = str_replace('/', '\\', realpath($outputFile));
+
+$cmd = '"' . $soffice . '" --headless --norestore --nofirststartwizard --nolockcheck '
+     . '-env:UserInstallation="file:///C:/Windows/Temp/libreoffice-php-profile" '
+     . '--convert-to pdf '
+     . '--outdir "' . $outDirWin . '" '
+     . '"' . $xlsxWin . '"';
+
+$descriptors = [
+    0 => ['pipe', 'r'],
+    1 => ['pipe', 'w'],
+    2 => ['pipe', 'w'],
+];
+$env = [
+    'HOME'    => 'C:\\Windows\\Temp',
+    'APPDATA' => 'C:\\Windows\\Temp',
+    'TEMP'    => 'C:\\Windows\\Temp',
+    'TMP'     => 'C:\\Windows\\Temp',
+];
+
+$proc = proc_open($cmd, $descriptors, $pipes, null, $env);
+if (is_resource($proc)) {
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $timeout = 30;
+    $start   = time();
+    while (true) {
+        $status = proc_get_status($proc);
+        if (!$status['running']) break;
+        if ((time() - $start) >= $timeout) { proc_terminate($proc, 9); break; }
+        usleep(300000);
+    }
+    fclose($pipes[0]); fclose($pipes[1]); fclose($pipes[2]);
+    proc_close($proc);
+}
+
+$pdfFile = $outDirWin . '\\' . pathinfo($outputFile, PATHINFO_FILENAME) . '.pdf';
 if (!file_exists($pdfFile)) {
     failExport($hid, 'Không thể convert sang PDF. Kiểm tra LibreOffice đã cài chưa.', $outputFile);
 }
@@ -391,6 +442,7 @@ if (!file_exists($pdfFile)) {
 
 $db->query("UPDATE hawbs SET is_printed=1, printed_at=NOW() WHERE id={$hid}");
 
+// ── Stream PDF ra browser ─────────────────────────────────────────────────────
 while (ob_get_level() > 0) ob_end_clean();
 clearstatcache(true, $pdfFile);
 header('Content-Type: application/pdf');
