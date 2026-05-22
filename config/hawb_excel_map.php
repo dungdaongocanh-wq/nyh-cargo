@@ -20,22 +20,26 @@ return [
     'consignee_address' => 'A13',
 
     // ── ROUTING ───────────────────────────────────────────
-    'airport_departure' => 'A25',
-    'airport_dest'      => ['A27', 'A30'],  // cần phải điền cả 2 ô
-    'issuing_carrier'   => 'B27',  // By first carrier (airline name)
+    'airport_departure'      => 'A25',  // tên sân bay khởi hành đầy đủ
+    'airport_dest'           => 'A27',  // mã sân bay đích (vd: PVG)
+    'airport_dest_fullname'  => 'A30',  // tên sân bay đích đầy đủ (vd: SHANGHAI PUDONG)
+    'issuing_carrier'        => 'B27',  // By first carrier (airline name)
 
     // ── FLIGHT ────────────────────────────────────────────
     'flight_no'         => 'G30',
-    'flight_date'       => ['K30', 'N68'],  // cần phải điền cả 2 ô
+    'flight_date'       => 'K30',
+    'flight_date_footer'=> 'N68',       // cần phải điền cả 2 ô
 
     // ── HANDLING ──────────────────────────────────────────
     'notify_party'      => '',
     'handling_info'     => 'A33',
 
     // ── WEIGHT & PIECES ───────────────────────────────────
-    'no_of_pieces'      => ['A40', 'A54'],  // cần phải điền cả 2 ô
-    'gross_weight'      => ['B40', 'B54'],  // cần phải điền cả 2 ô
-    'chargeable_weight' => 'I40',
+    'no_of_pieces'        => 'A40',
+    'no_of_pieces_footer' => 'A54',     // cần phải điền cả 2 ô
+    'gross_weight'        => 'B40',
+    'gross_weight_footer' => 'B54',     // cần phải điền cả 2 ô
+    'chargeable_weight'   => 'I40',
 
     // ── COMMODITY ─────────────────────────────────────────
     'commodity_line1'   => 'Y40',
@@ -56,7 +60,7 @@ return [
     'agent_name'        => '',
     'agent_iata'        => '',
     'routing_to1'       => '',
-    'routing_by1'       => 'A30',
+    'routing_by1'       => '',
     'routing_to2'       => '',
     'routing_by2'       => '',
     'payment_term'      => '',
