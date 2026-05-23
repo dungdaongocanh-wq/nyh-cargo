@@ -69,10 +69,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hawb_pieces      = $_POST['hawb_pieces']       ?? [];
     $hawb_payment     = $_POST['hawb_payment_term'] ?? [];
     $hawb_notify      = $_POST['hawb_notify_party'] ?? [];
+    $hawb_no_manual   = $_POST['hawb_no_manual']    ?? [];
 
     $totalPieces = 0;
     foreach ($hawb_shippers as $idx => $shipperId) {
-        $gen       = generateHawbNo();
+        $manualNo  = strtoupper(trim($hawb_no_manual[$idx] ?? ''));
+        if ($manualNo !== '') {
+            $hawbNoToUse = $manualNo;
+            $seqYear     = '';
+            $seqMonth    = '';
+            $seqNumber   = 0;
+        } else {
+            $gen         = generateHawbNo();
+            $hawbNoToUse = $gen['hawb_no'];
+            $seqYear     = $gen['seq_year'];
+            $seqMonth    = $gen['seq_month'];
+            $seqNumber   = $gen['seq_number'];
+        }
         $shipId    = (int)$shipperId ?: null;
         $cneeId    = (int)($hawb_consignees[$idx]  ?? 0) ?: null;
         $commodity = trim($hawb_commodities[$idx]  ?? '');
@@ -89,7 +102,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
         ");
         $stmt2->bind_param('ssissiiiisiss',
-            $gen['hawb_no'],$manifest_id,$gen['seq_year'],$gen['seq_month'],$gen['seq_number'],
+            $hawbNoToUse,$manifest_id,$seqYear,$seqMonth,$seqNumber,
             $shipId,$cneeId,$origin_id,$dest_id,
             $commodity,$pcs,$payment,$notify
         );
@@ -444,6 +457,27 @@ $pageTitle = 'New Manifest';
 
         <div class="row g-2 mt-1">
 
+            <!-- HAWB NO (editable) -->
+            <div class="col-md-4">
+                <label class="form-label small fw-bold">
+                    HAWB No
+                    <span class="text-muted fw-normal">(tự động — có thể sửa)</span>
+                </label>
+                <div class="input-group input-group-sm">
+                    <input type="text" name="hawb_no_manual[]" id="hawbNo_{IDX}"
+                           class="form-control form-control-sm text-uppercase fw-bold"
+                           placeholder="Đang tải..." autocomplete="off"
+                           style="letter-spacing:.05em;">
+                    <button type="button" class="btn btn-outline-secondary btn-sm"
+                            onclick="suggestHawbNo({IDX})" title="Lấy số tự động">
+                        <i class="bi bi-arrow-clockwise"></i>
+                    </button>
+                </div>
+                <small class="text-muted" style="font-size:.7rem;">
+                    Để trống = tự động tạo khi lưu
+                </small>
+            </div>
+
             <!-- SHIPPER -->
             <div class="col-md-4">
                 <label class="form-label required small">Shipper</label>
@@ -750,6 +784,15 @@ function selectHawbDropdown(type, idx, sel) {
 // ════════════════════════════════════════════════════════
 // ADD / REMOVE HAWB ROWS
 // ════════════════════════════════════════════════════════
+function suggestHawbNo(idx) {
+    const el = document.getElementById('hawbNo_' + idx);
+    if (el) el.placeholder = 'Đang tải...';
+    fetch('<?= BASE_URL ?>api/next_hawb.php')
+        .then(r => r.json())
+        .then(data => { if (el) el.value = data.hawb_no; })
+        .catch(() => { if (el) el.placeholder = 'Lỗi'; });
+}
+
 function addHawbRow() {
     const idx = hawkIdx++;
     const num = document.querySelectorAll('.hawb-row').length + 1;
@@ -764,6 +807,7 @@ function addHawbRow() {
     document.getElementById('noHawbMsg').style.display = 'none';
     renumberHawbs();
     calcTotalPcs();
+    suggestHawbNo(idx);
 
     // Focus first input of new row
     document.getElementById('shipSearch_' + idx)?.focus();

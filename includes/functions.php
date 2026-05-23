@@ -32,6 +32,19 @@ function generateHawbNo(): array {
     ];
 }
 
+function peekNextHawbNo(): string {
+    $db = getDB();
+    $ym = date('ym');
+    $row = $db->query(
+        "SELECT COALESCE(MAX(last_seq), 0) + 1 AS next_seq
+         FROM hawb_sequence WHERE year_month = '$ym'"
+    )->fetch_assoc();
+    $seq = (int)($row['next_seq'] ?? 1);
+    $yy  = substr($ym, 0, 2);
+    $mm  = substr($ym, 2, 2);
+    return HAWB_PREFIX . $yy . $mm . str_pad($seq, 3, '0', STR_PAD_LEFT) . HAWB_SUFFIX;
+}
+
 // ── Flash messages ───────────────────────────────────────
 function setFlash(string $type, string $message): void {
     if (session_status() === PHP_SESSION_NONE) session_start();
