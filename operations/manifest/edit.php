@@ -94,7 +94,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
 
         if ($action === 'add_hawb' && in_array($manifest['status'], ['draft','confirmed'])) {
-            $gen       = generateHawbNo();
+            $manualNo  = strtoupper(trim($_POST['hawb_no_manual'] ?? ''));
+            if ($manualNo !== '') {
+                $hawbNoToUse = $manualNo;
+                $seqYear     = '';
+                $seqMonth    = '';
+                $seqNumber   = 0;
+            } else {
+                $gen         = generateHawbNo();
+                $hawbNoToUse = $gen['hawb_no'];
+                $seqYear     = $gen['seq_year'];
+                $seqMonth    = $gen['seq_month'];
+                $seqNumber   = $gen['seq_number'];
+            }
             $shipId    = (int)($_POST['shipper_id']   ?? 0) ?: null;
             $cneeId    = (int)($_POST['consignee_id'] ?? 0) ?: null;
             $commodity = trim($_POST['commodity']     ?? '');
@@ -110,14 +122,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ");
             $stmt->bind_param('ssissiiiisiss',
-                $gen['hawb_no'], $id, $gen['seq_year'], $gen['seq_month'], $gen['seq_number'],
+                $hawbNoToUse, $id, $seqYear, $seqMonth, $seqNumber,
                 $shipId, $cneeId, $manifest['origin_id'], $manifest['destination_id'],
                 $commodity, $pcs, $payment, $notify
             );
             $stmt->execute();
             $stmt->close();
             recalcManifestTotals($db, $id);
-            setFlash('success', "HAWB <strong>{$gen['hawb_no']}</strong> added.");
+            setFlash('success', "HAWB <strong>{$hawbNoToUse}</strong> added.");
             redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
         }
 
@@ -827,12 +839,28 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                 <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
             </div>
             <div class="modal-body">
-                <div class="alert alert-info small py-2 mb-3">
-                    <i class="bi bi-info-circle me-1"></i>
-                    HAWB No sẽ được tự động tạo.
-                    Origin/Destination tự động lấy từ manifest.
-                </div>
                 <div class="row g-3">
+                    <!-- HAWB No -->
+                    <div class="col-md-12">
+                        <label class="form-label fw-semibold">
+                            HAWB No
+                            <span class="text-muted fw-normal">(để trống = tự động tạo)</span>
+                        </label>
+                        <div class="input-group">
+                            <input type="text" name="hawb_no_manual" id="m_hawbNo"
+                                   class="form-control text-uppercase fw-bold"
+                                   placeholder="Để trống để tự động tạo"
+                                   autocomplete="off" style="letter-spacing:.05em;">
+                            <button type="button" class="btn btn-outline-secondary"
+                                    onclick="suggestModalHawbNo()" title="Lấy số gợi ý">
+                                <i class="bi bi-arrow-clockwise me-1"></i>Gợi ý
+                            </button>
+                        </div>
+                        <small class="text-muted">
+                            <i class="bi bi-info-circle me-1"></i>
+                            Origin/Destination tự động lấy từ manifest.
+                        </small>
+                    </div>
 
                     <!-- Shipper -->
                     <div class="col-md-6">
@@ -985,6 +1013,19 @@ function modalSelectParty(type, sel) {
         document.getElementById('m_cneeSearch').value = opt.dataset.code + ' — ' + opt.dataset.name;
     }
 }
+
+function suggestModalHawbNo() {
+    const el = document.getElementById('m_hawbNo');
+    if (el) el.placeholder = 'Đang tải...';
+    fetch('<?= BASE_URL ?>api/next_hawb.php')
+        .then(r => r.json())
+        .then(data => { if (el) { el.value = data.hawb_no; el.placeholder = ''; } })
+        .catch(() => { if (el) el.placeholder = 'Lỗi tải số'; });
+}
+
+document.getElementById('modalAddHawb')?.addEventListener('show.bs.modal', function() {
+    suggestModalHawbNo();
+});
 
 // ════════════════════════════════════════════════════════
 // WEIGH PANEL — DIM GROUPS + LIVE CALC
