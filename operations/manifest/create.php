@@ -69,6 +69,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $hawb_pieces      = $_POST['hawb_pieces']       ?? [];
     $hawb_payment     = $_POST['hawb_payment_term'] ?? [];
     $hawb_notify      = $_POST['hawb_notify_party'] ?? [];
+    $hawb_inv_no      = $_POST['hawb_inv_no']       ?? [];
     $hawb_no_manual   = $_POST['hawb_no_manual']    ?? [];
 
     $totalPieces = 0;
@@ -92,19 +93,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $pcs       = (int)($hawb_pieces[$idx]      ?? 0);
         $payment   = $hawb_payment[$idx]            ?? 'PP';
         $notify    = trim($hawb_notify[$idx]        ?? '');
+        $inv_no    = strtoupper(trim($hawb_inv_no[$idx] ?? ''));
         $totalPieces += $pcs;
 
         $stmt2 = $db->prepare("
             INSERT INTO hawbs
                 (hawb_no,manifest_id,seq_year,seq_month,seq_number,
                  shipper_id,consignee_id,origin_id,destination_id,
-                 commodity,no_of_pieces,payment_term,notify_party)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                 commodity,no_of_pieces,payment_term,notify_party,inv_no)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         ");
-        $stmt2->bind_param('ssissiiiisiss',
+        $stmt2->bind_param('ssissiiiisisss',
             $hawbNoToUse,$manifest_id,$seqYear,$seqMonth,$seqNumber,
             $shipId,$cneeId,$origin_id,$dest_id,
-            $commodity,$pcs,$payment,$notify
+            $commodity,$pcs,$payment,$notify,$inv_no
         );
         $stmt2->execute();
         $stmt2->close();
@@ -545,6 +547,14 @@ $pageTitle = 'New Manifest';
     <label class="form-label small">Notify Party</label>
     <textarea name="hawb_notify_party[]" class="form-control form-control-sm" rows="3"
               placeholder="Optional — shown on weight slip"></textarea>
+</div>
+
+<!-- INV No -->
+<div class="col-md-4">
+    <label class="form-label small">INV No.</label>
+    <input type="text" name="hawb_inv_no[]"
+           class="form-control form-control-sm text-uppercase"
+           placeholder="e.g. SEMCO-OPT-260521-S2">
 </div>
 
 <!-- HANDLING INFORMATION ← MỚI -->

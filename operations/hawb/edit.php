@@ -74,6 +74,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $payment   = $_POST['payment_term']         ?? 'PP';
         $commodity = trim($_POST['commodity']       ?? '');
         $notify    = trim($_POST['notify_party']    ?? '');
+        $invNo     = strtoupper(trim($_POST['inv_no'] ?? ''));
         $handling  = trim($_POST['handling_info']   ?? '');
 
         // Extra fields
@@ -95,6 +96,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 payment_term            = ?,
                 commodity               = ?,
                 notify_party            = ?,
+                inv_no                  = ?,
                 handling_info           = ?,
                 currency                = ?,
                 rate_class              = ?,
@@ -105,10 +107,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 amount_insurance        = ?
             WHERE id = ?
         ");
-        $stmt->bind_param('iiiissssssssssssi',
+        $stmt->bind_param('iiiiissssssssssssi',
             $shipId, $cneeId, $originId, $destId,
             $pcs, $payment,
-            $commodity, $notify, $handling,
+            $commodity, $notify, $invNo, $handling,
             $currency, $rateClass, $itemNo,
             $acctInfo, $declCarr, $declCust, $insurance,
             $hid
@@ -407,6 +409,14 @@ $pageTitle = 'Edit HAWB: ' . ($hawb['hawb_no'] ?? '');
                     <label class="form-label">Notify Party</label>
                     <textarea name="notify_party" class="form-control" rows="4"
                               placeholder="Optional — shown on weight slip"><?= e($hawb['notify_party'] ?? '') ?></textarea>
+                </div>
+
+                <!-- INV No -->
+                <div class="col-md-12">
+                    <label class="form-label">INV No.</label>
+                    <input type="text" name="inv_no" class="form-control text-uppercase"
+                           placeholder="e.g. SEMCO-OPT-260521-S2"
+                           value="<?= e($hawb['inv_no'] ?? '') ?>">
                 </div>
 
                 <!-- Handling Info -->

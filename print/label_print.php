@@ -276,6 +276,31 @@ foreach ($hawbs as $hw) $totalLabels += max(1, (int)$hw['no_of_pieces']);
         }
         .term-pp { background: #dbeafe; color: #1d4ed8; }
         .term-cc { background: #fee2e2; color: #dc2626; }
+
+        /* INV No row */
+        .label-inv {
+            display: flex;
+            align-items: center;
+            border: 1px solid #aaa;
+            border-radius: 1.5mm;
+            padding: 1mm 1.5mm;
+            margin-top: 1mm;
+            flex-shrink: 0;
+            gap: 1.5mm;
+        }
+        .label-inv-label {
+            font-size: 11pt;
+            font-weight: 900;
+            white-space: nowrap;
+            color: #000;
+        }
+        .label-inv-value {
+            font-size: 11pt;
+            font-weight: 700;
+            color: #000;
+            flex: 1;
+            word-break: break-all;
+        }
     </style>
 </head>
 <body>
@@ -388,6 +413,12 @@ foreach ($hawbs as $hw) $totalLabels += max(1, (int)$hw['no_of_pieces']);
         <?= nl2br(e($commodityShort)) ?>
     </div>
     <?php endif; ?>
+
+    <!-- INV No -->
+    <div class="label-inv">
+        <span class="label-inv-label">INV:</span>
+        <span class="label-inv-value"><?= e($hw['inv_no'] ?? '') ?></span>
+    </div>
 
     <!-- Footer: MAWB + Payment Term -->
     <div class="label-footer">
