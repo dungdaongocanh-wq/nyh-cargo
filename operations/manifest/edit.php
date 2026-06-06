@@ -113,18 +113,19 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $pcs       = max(1, (int)($_POST['no_of_pieces'] ?? 1));
             $payment   = $_POST['payment_term']       ?? 'PP';
             $notify    = trim($_POST['notify_party']  ?? '');
+            $inv_no    = strtoupper(trim($_POST['inv_no'] ?? ''));
 
             $stmt = $db->prepare("
                 INSERT INTO hawbs
                     (hawb_no, manifest_id, seq_year, seq_month, seq_number,
                      shipper_id, consignee_id, origin_id, destination_id,
-                     commodity, no_of_pieces, payment_term, notify_party)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                     commodity, no_of_pieces, payment_term, notify_party, inv_no)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             ");
-            $stmt->bind_param('ssissiiiisiss',
+            $stmt->bind_param('ssissiiiisisss',
                 $hawbNoToUse, $id, $seqYear, $seqMonth, $seqNumber,
                 $shipId, $cneeId, $manifest['origin_id'], $manifest['destination_id'],
-                $commodity, $pcs, $payment, $notify
+                $commodity, $pcs, $payment, $notify, $inv_no
             );
             $stmt->execute();
             $stmt->close();
@@ -933,6 +934,13 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                         <label class="form-label">Notify Party</label>
                         <textarea name="notify_party" class="form-control" rows="3"
                                   placeholder="Optional — shown on weight slip / label"></textarea>
+                    </div>
+
+                    <!-- INV No -->
+                    <div class="col-md-6">
+                        <label class="form-label">INV No.</label>
+                        <input type="text" name="inv_no" class="form-control text-uppercase"
+                               placeholder="e.g. SEMCO-OPT-260521-S2">
                     </div>
                 </div>
             </div>
