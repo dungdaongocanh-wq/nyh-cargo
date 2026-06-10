@@ -7,7 +7,7 @@ requireLogin();
 
 $db = getDB();
 
-// ── CONFIRM MANIFEST (Manager/Admin) ──────────────────
+// ── CONFIRM / DELETE (Manager/Admin) ──────────────────
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isManager()) {
     $action = $_POST['action'] ?? '';
     $id     = (int)($_POST['id'] ?? 0);
@@ -35,10 +35,12 @@ $where = ["1=1"];
 if ($search)     $where[] = "(m.mawb_no LIKE '%$search%' OR m.flight_no LIKE '%$search%' OR c.name LIKE '%$search%')";
 if ($filterStat) $where[] = "m.status='$filterStat'";
 if ($filterDate) $where[] = "m.flight_date='$filterDate'";
-// Staff chỉ thấy manifest được phân cho mình
+
+// ★ THÊM MỚI: Staff chỉ thấy manifest được phân cho mình
 if (currentUserRole() === ROLE_STAFF) {
     $where[] = "m.assigned_staff_id = " . currentUserId();
 }
+
 $whereStr = implode(' AND ', $where);
 
 $sql = "
@@ -87,6 +89,15 @@ $pageTitle = 'Manifests';
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="<?= BASE_URL ?>assets/css/app.css" rel="stylesheet">
+    <style>
+        /* Row clickable */
+        tbody tr.manifest-row { cursor: pointer; }
+        tbody tr.manifest-row:hover td { background-color: #eef2ff; }
+
+        /* Prevent row click propagating from action buttons */
+        .action-cell { cursor: default; }
+        .action-cell * { cursor: pointer; }
+    </style>
 </head>
 <body style="background:#f0f2f5;">
 <?php require_once __DIR__ . '/../../includes/navbar.php'; ?>
@@ -173,7 +184,7 @@ $pageTitle = 'Manifests';
                         <th>GW / CW</th>
                         <th>Status</th>
                         <?php if (isManager()): ?>
-                        <th>Staff</th>
+                        <th>Staff</th><?php /* ★ THÊM MỚI */ ?>
                         <?php endif; ?>
                         <th>Weighed</th>
                         <th class="text-end pe-3">Actions</th>
@@ -184,8 +195,9 @@ $pageTitle = 'Manifests';
                     $hawbCount    = (int)$row['hawb_count'];
                     $weighedCount = (int)$row['weighed_count'];
                     $allWeighed   = $hawbCount > 0 && $weighedCount === $hawbCount;
+                    $editUrl      = BASE_URL . 'operations/manifest/edit.php?id=' . $row['id'];
                 ?>
-                <tr>
+                <tr class="manifest-row" onclick="window.location='<?= $editUrl ?>'">
                     <td class="ps-3">
                         <div class="fw-bold text-primary"><?= e($row['mawb_no']) ?></div>
                         <small class="text-muted"><?= e($row['airline_code']) ?> · <?= e($row['airline_name']) ?></small>
@@ -213,11 +225,20 @@ $pageTitle = 'Manifests';
                         </small>
                     </td>
                     <td><?= statusBadge($row['status']) ?></td>
+
                     <?php if (isManager()): ?>
+                    <!-- ★ THÊM MỚI: Cột Staff phụ trách -->
                     <td>
-                        <small><?= e($row['assigned_staff_name'] ?? '—') ?></small>
+                        <?php if (!empty($row['assigned_staff_name'])): ?>
+                        <span class="badge bg-light text-dark border">
+                            <i class="bi bi-person me-1"></i><?= e($row['assigned_staff_name']) ?>
+                        </span>
+                        <?php else: ?>
+                        <span class="text-muted small">—</span>
+                        <?php endif; ?>
                     </td>
                     <?php endif; ?>
+
                     <td>
                         <?php if ($hawbCount === 0): ?>
                         <span class="text-muted small">—</span>
@@ -231,19 +252,23 @@ $pageTitle = 'Manifests';
                         </span>
                         <?php endif; ?>
                     </td>
-                    <td class="text-end pe-3">
+
+                    <!-- Actions — stop propagation so clicks don't open the row -->
+                    <td class="text-end pe-3 action-cell" onclick="event.stopPropagation()">
                         <div class="d-flex gap-1 justify-content-end">
-                            <!-- View/Edit -->
-                            <a href="<?= BASE_URL ?>operations/manifest/edit.php?id=<?= $row['id'] ?>"
-                               class="btn btn-sm btn-outline-primary btn-action" title="Open">
-                                <i class="bi bi-folder2-open"></i>
+
+                            <!-- Edit -->
+                            <a href="<?= $editUrl ?>"
+                               class="btn btn-sm btn-outline-primary btn-action" title="Edit Manifest">
+                                <i class="bi bi-pencil-square"></i>
                             </a>
+
                             <?php if (isManager() && $row['status'] === 'draft'): ?>
                             <!-- Confirm -->
                             <form method="POST" class="d-inline"
                                   onsubmit="return confirm('Confirm manifest <?= e($row['mawb_no']) ?>?\nStaff will be able to see and weigh HAWBs.')">
                                 <input type="hidden" name="action" value="confirm">
-                                <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                                <input type="hidden" name="id"     value="<?= $row['id'] ?>">
                                 <button class="btn btn-sm btn-outline-success btn-action" title="Confirm">
                                     <i class="bi bi-check-circle"></i>
                                 </button>
@@ -252,25 +277,19 @@ $pageTitle = 'Manifests';
                             <form method="POST" class="d-inline"
                                   onsubmit="return confirm('Delete manifest <?= e($row['mawb_no']) ?>?')">
                                 <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="id" value="<?= $row['id'] ?>">
+                                <input type="hidden" name="id"     value="<?= $row['id'] ?>">
                                 <button class="btn btn-sm btn-outline-danger btn-action" title="Delete">
                                     <i class="bi bi-trash"></i>
                                 </button>
                             </form>
                             <?php endif; ?>
-                            <!-- Print Manifest -->
-                            <?php if ($row['status'] !== 'draft'): ?>
-                            <a href="<?= BASE_URL ?>print/manifest_print.php?id=<?= $row['id'] ?>"
-                               target="_blank"
-                               class="btn btn-sm btn-outline-secondary btn-action" title="Print Manifest">
-                                <i class="bi bi-printer"></i>
-                            </a>
-                            <?php endif; ?>
+
                         </div>
                     </td>
                 </tr>
                 <?php endwhile; ?>
                 <?php if ($rows->num_rows === 0): ?>
+                <!-- ★ THÊM MỚI: colspan động theo role -->
                 <tr><td colspan="<?= isManager() ? 11 : 10 ?>" class="text-center py-5 text-muted">
                     <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
                     No manifests found.
@@ -286,6 +305,7 @@ $pageTitle = 'Manifests';
         </div>
     </div>
 </div>
+
 </main>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
