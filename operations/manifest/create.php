@@ -16,9 +16,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $origin_id   = (int)($_POST['origin_id']               ?? 0);
     $dest_id     = (int)($_POST['destination_id']          ?? 0);
     $customer_id = (int)($_POST['customer_id']             ?? 0) ?: null;
-    $assigned_staff_id = (int)($_POST['assigned_staff_id'] ?? 0) ?: null;
     $notes       = trim($_POST['notes']                    ?? '');
     $status      = isset($_POST['confirm_now']) ? 'confirmed' : 'draft';
+
+    // ★ THÊM MỚI: Assigned Staff
+    $assigned_staff_id = (int)($_POST['assigned_staff_id'] ?? 0) ?: null;
 
     $errors = [];
     if (!$mawb_no)     $errors[] = 'MAWB No is required.';
@@ -27,6 +29,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$flight_date) $errors[] = 'Flight date is required.';
     if (!$origin_id)   $errors[] = 'Origin airport is required.';
     if (!$dest_id)     $errors[] = 'Destination airport is required.';
+    // ★ THÊM MỚI: Validate Assigned Staff
     if (!$assigned_staff_id) $errors[] = 'Assigned Staff is required.';
 
     if (!$errors) {
@@ -45,6 +48,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $by          = currentUserId();
     $confirmedAt = $status === 'confirmed' ? date('Y-m-d H:i:s') : null;
+
+    // ★ THÊM MỚI: Thêm assigned_staff_id vào INSERT
     $stmt = $db->prepare("
         INSERT INTO manifests
             (mawb_no,airline_id,flight_no,flight_date,origin_id,destination_id,
@@ -65,19 +70,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt->close();
 
     // Insert HAWBs
+    $hawb_no_manual   = $_POST['hawb_no_manual']    ?? [];
     $hawb_shippers    = $_POST['hawb_shipper_id']   ?? [];
     $hawb_consignees  = $_POST['hawb_consignee_id'] ?? [];
     $hawb_commodities = $_POST['hawb_commodity']    ?? [];
     $hawb_pieces      = $_POST['hawb_pieces']       ?? [];
     $hawb_payment     = $_POST['hawb_payment_term'] ?? [];
     $hawb_notify      = $_POST['hawb_notify_party'] ?? [];
-    $hawb_no_manual   = $_POST['hawb_no_manual']    ?? [];
 
     $totalPieces = 0;
     foreach ($hawb_shippers as $idx => $shipperId) {
-        $manualNo  = strtoupper(trim($hawb_no_manual[$idx] ?? ''));
-        if ($manualNo !== '') {
-            $hawbNoToUse = $manualNo;
+        // Ưu tiên số nhập tay, fallback tự động nếu để trống
+        $hawbNoInput = strtoupper(trim($hawb_no_manual[$idx] ?? ''));
+        if ($hawbNoInput !== '') {
+            $hawbNoToUse = $hawbNoInput;
             $seqYear     = '';
             $seqMonth    = '';
             $seqNumber   = 0;
@@ -88,6 +94,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $seqMonth    = $gen['seq_month'];
             $seqNumber   = $gen['seq_number'];
         }
+
         $shipId    = (int)$shipperId ?: null;
         $cneeId    = (int)($hawb_consignees[$idx]  ?? 0) ?: null;
         $commodity = trim($hawb_commodities[$idx]  ?? '');
@@ -128,6 +135,8 @@ $airports_rs  = $db->query("SELECT id,iata_code,name,city,country FROM airports 
 $customers_rs = $db->query("SELECT id,code,name FROM customers  WHERE is_active=1 ORDER BY code");
 $shippers_rs  = $db->query("SELECT id,code,name FROM shippers   WHERE is_active=1 ORDER BY code");
 $consignees_rs= $db->query("SELECT id,code,name FROM consignees WHERE is_active=1 ORDER BY code");
+
+// ★ THÊM MỚI: Danh sách staff để assign
 $staffList    = $db->query("SELECT id,full_name,username FROM users WHERE role='staff' AND is_active=1 ORDER BY full_name")->fetch_all(MYSQLI_ASSOC);
 
 $airlineList  = $airlines_rs->fetch_all(MYSQLI_ASSOC);
@@ -148,7 +157,6 @@ $pageTitle = 'New Manifest';
     <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
     <link href="<?= BASE_URL ?>assets/css/app.css" rel="stylesheet">
     <style>
-        /* ── Autocomplete ── */
         .autocomplete-list {
             position: absolute; z-index: 9999;
             background: #fff; border: 1px solid #dee2e6;
@@ -164,7 +172,6 @@ $pageTitle = 'New Manifest';
         .ac-code { font-weight: 700; color: #0d6efd; margin-right: .35rem; }
         .ac-name { color: #495057; }
 
-        /* ── HAWB row ── */
         .hawb-row {
             background: #fff; border: 1px solid #dee2e6;
             border-radius: 12px; padding: 1.1rem 1.25rem;
@@ -178,7 +185,6 @@ $pageTitle = 'New Manifest';
         }
         .hawb-delete { position: absolute; top: 10px; right: 12px; }
 
-        /* ── Combo field ── */
         .combo-field .form-control { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
         .combo-field .form-select  {
             border-top: none;
@@ -205,7 +211,6 @@ $pageTitle = 'New Manifest';
 </div>
 <?php endif; ?>
 
-<!-- Breadcrumb -->
 <nav aria-label="breadcrumb" class="mb-3">
     <ol class="breadcrumb">
         <li class="breadcrumb-item">
@@ -217,7 +222,6 @@ $pageTitle = 'New Manifest';
 
 <form method="POST" id="manifestForm">
 
-<!-- ── PAGE HEADER ─────────────────────────────────── -->
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
         <h4 class="fw-bold mb-0">
@@ -238,9 +242,7 @@ $pageTitle = 'New Manifest';
     </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════
-     SECTION 1 — MASTER AIR WAYBILL INFO
-═══════════════════════════════════════════════════ -->
+<!-- SECTION 1 — MAWB INFO -->
 <div class="card mb-4">
     <div class="card-header py-3">
         <span class="fw-bold">
@@ -250,7 +252,6 @@ $pageTitle = 'New Manifest';
     <div class="card-body">
         <div class="row g-3">
 
-            <!-- AIRLINE -->
             <div class="col-md-4">
                 <label class="form-label required">Airline</label>
                 <div class="position-relative combo-field">
@@ -275,7 +276,6 @@ $pageTitle = 'New Manifest';
                 <div id="airlineSelected" class="mt-1"></div>
             </div>
 
-            <!-- MAWB NO -->
             <div class="col-md-4">
                 <label class="form-label required">Master Air Waybill No</label>
                 <div class="input-group">
@@ -288,21 +288,18 @@ $pageTitle = 'New Manifest';
                 <small class="text-muted">Prefix auto-filled from airline</small>
             </div>
 
-            <!-- FLIGHT NO -->
             <div class="col-md-2">
                 <label class="form-label required">Flight No</label>
                 <input type="text" name="flight_no" class="form-control text-uppercase"
                        placeholder="HO1330" required>
             </div>
 
-            <!-- FLIGHT DATE -->
             <div class="col-md-2">
                 <label class="form-label required">Flight Date</label>
                 <input type="date" name="flight_date" class="form-control"
                        value="<?= date('Y-m-d') ?>" required>
             </div>
 
-            <!-- ORIGIN AIRPORT -->
             <div class="col-md-3">
                 <label class="form-label required">Origin Airport (FROM)</label>
                 <div class="position-relative combo-field">
@@ -327,7 +324,6 @@ $pageTitle = 'New Manifest';
                 <div id="originSelected" class="mt-1"></div>
             </div>
 
-            <!-- DESTINATION AIRPORT -->
             <div class="col-md-3">
                 <label class="form-label required">Destination Airport (TO)</label>
                 <div class="position-relative combo-field">
@@ -352,7 +348,6 @@ $pageTitle = 'New Manifest';
                 <div id="destSelected" class="mt-1"></div>
             </div>
 
-            <!-- CONSIGNEE MAWB -->
             <div class="col-md-4">
                 <label class="form-label">Consignee (MAWB)</label>
                 <div class="position-relative combo-field">
@@ -375,22 +370,23 @@ $pageTitle = 'New Manifest';
                 <div id="customerSelected" class="mt-1"></div>
             </div>
 
-            <!-- NOTES -->
             <div class="col-md-2">
                 <label class="form-label">Notes</label>
                 <input type="text" name="notes" class="form-control" placeholder="Optional">
             </div>
 
-            <!-- ASSIGNED STAFF -->
-            <div class="col-md-4">
+            <!-- ★ THÊM MỚI: Assigned Staff -->
+            <div class="col-md-6">
                 <label class="form-label required">
                     Assigned Staff
-                    <span class="badge bg-danger ms-1" style="font-size:.65rem;letter-spacing:.03em;">Bắt buộc</span>
+                    <span class="badge bg-danger ms-1" style="font-size:.65rem;">Bắt buộc</span>
                 </label>
                 <select name="assigned_staff_id" id="assigned_staff_id" class="form-select" required>
                     <option value="">— Chọn nhân viên phụ trách —</option>
                     <?php foreach ($staffList as $s): ?>
-                    <option value="<?= $s['id'] ?>"><?= e($s['full_name']) ?> (<?= e($s['username']) ?>)</option>
+                    <option value="<?= $s['id'] ?>">
+                        <?= e($s['full_name']) ?> (<?= e($s['username']) ?>)
+                    </option>
                     <?php endforeach; ?>
                 </select>
                 <small class="text-muted">
@@ -398,9 +394,8 @@ $pageTitle = 'New Manifest';
                 </small>
             </div>
 
-        </div><!-- /row -->
+        </div>
 
-        <!-- Shipper MAWB (Fixed NAMYANG) -->
         <div class="mt-3 p-3 bg-light rounded-3 border-start border-4 border-primary">
             <div class="text-uppercase fw-bold small text-muted mb-1"
                  style="font-size:.7rem;letter-spacing:.06em;">
@@ -421,9 +416,7 @@ $pageTitle = 'New Manifest';
     </div>
 </div>
 
-<!-- ══════════════════════════════════════════════════
-     SECTION 2 — HAWB BILLS
-═══════════════════════════════════════════════════ -->
+<!-- SECTION 2 — HAWB BILLS -->
 <div class="card mb-4">
     <div class="card-header py-3 d-flex justify-content-between align-items-center">
         <span class="fw-bold">
@@ -447,7 +440,6 @@ $pageTitle = 'New Manifest';
     </div>
 </div>
 
-<!-- Submit bottom -->
 <div class="d-flex justify-content-end gap-2 mb-5">
     <a href="index.php" class="btn btn-outline-secondary">
         <i class="bi bi-x me-1"></i>Cancel
@@ -462,11 +454,9 @@ $pageTitle = 'New Manifest';
 
 </form>
 </main>
-</div><!-- /wrapper -->
+</div>
 
-<!-- ══════════════════════════════════════════════════
-     HAWB ROW TEMPLATE
-═══════════════════════════════════════════════════ -->
+<!-- HAWB ROW TEMPLATE -->
 <template id="hawbTemplate">
     <div class="hawb-row mb-4" id="hawbRow_{IDX}">
         <div class="hawb-num">HAWB #{NUM}</div>
@@ -477,25 +467,27 @@ $pageTitle = 'New Manifest';
 
         <div class="row g-2 mt-1">
 
-            <!-- HAWB NO (editable) -->
+            <!-- HAWB NO — nhập tay -->
             <div class="col-md-4">
                 <label class="form-label small fw-bold">
-                    HAWB No
-                    <span class="text-muted fw-normal">(tự động — có thể sửa)</span>
+                    HAWB No <span class="text-danger">*</span>
+                    <span class="text-muted fw-normal">(nhập tay)</span>
                 </label>
                 <div class="input-group input-group-sm">
                     <input type="text" name="hawb_no_manual[]" id="hawbNo_{IDX}"
-                           class="form-control form-control-sm text-uppercase fw-bold"
-                           placeholder="Đang tải..." autocomplete="off"
-                           style="letter-spacing:.05em;">
+                           class="form-control form-control-sm text-uppercase fw-bold hawb-no-input"
+                           placeholder="VD: NYH2505001A"
+                           autocomplete="off"
+                           style="letter-spacing:.05em;"
+                           data-idx="{IDX}"
+                           oninput="this.value=this.value.toUpperCase()"
+                           onblur="checkHawbDuplicate(this,{IDX})">
                     <button type="button" class="btn btn-outline-secondary btn-sm"
-                            onclick="suggestHawbNo({IDX})" title="Lấy số tự động">
+                            onclick="suggestHawbNo({IDX})" title="Gợi ý số tự động">
                         <i class="bi bi-arrow-clockwise"></i>
                     </button>
                 </div>
-                <small class="text-muted" style="font-size:.7rem;">
-                    Để trống = tự động tạo khi lưu
-                </small>
+                <div id="hawbNoWarn_{IDX}" class="mt-1" style="font-size:.75rem;"></div>
             </div>
 
             <!-- SHIPPER -->
@@ -554,47 +546,43 @@ $pageTitle = 'New Manifest';
             </div>
 
             <!-- COMMODITY -->
-<div class="col-md-8">
-    <label class="form-label small">Commodity / Description</label>
-    <textarea name="hawb_commodity[]" class="form-control form-control-sm" rows="3"
-              placeholder="e.g. 1PKG OF AUTO-FOCUSING COMPONENTS (SC1C87)&#10;INV SEMCO-OPT-260521-S2&#10;TERM CIF"></textarea>
-</div>
+            <div class="col-md-8">
+                <label class="form-label small">Commodity / Description</label>
+                <textarea name="hawb_commodity[]" class="form-control form-control-sm" rows="3"
+                          placeholder="e.g. 1PKG OF AUTO-FOCUSING COMPONENTS (SC1C87)&#10;INV SEMCO-OPT-260521-S2&#10;TERM CIF"></textarea>
+            </div>
 
-<!-- NOTIFY PARTY -->
-<div class="col-md-4">
-    <label class="form-label small">Notify Party</label>
-    <textarea name="hawb_notify_party[]" class="form-control form-control-sm" rows="3"
-              placeholder="Optional — shown on weight slip"></textarea>
-</div>
+            <!-- NOTIFY PARTY -->
+            <div class="col-md-4">
+                <label class="form-label small">Notify Party</label>
+                <textarea name="hawb_notify_party[]" class="form-control form-control-sm" rows="3"
+                          placeholder="Optional — shown on weight slip"></textarea>
+            </div>
 
-<!-- HANDLING INFORMATION ← MỚI -->
-<div class="col-md-12">
-    <label class="form-label small">
-        Handling Information
-        <span class="text-muted fw-normal">(if any)</span>
-    </label>
-    <input type="text" name="hawb_handling_info[]"
-           class="form-control form-control-sm"
-           placeholder="e.g. KEEP UPRIGHT · FRAGILE · DO NOT STACK · AS PER ATTACHED LIST">
-</div>
+            <!-- HANDLING INFORMATION -->
+            <div class="col-md-12">
+                <label class="form-label small">
+                    Handling Information
+                    <span class="text-muted fw-normal">(if any)</span>
+                </label>
+                <input type="text" name="hawb_handling_info[]"
+                       class="form-control form-control-sm"
+                       placeholder="e.g. KEEP UPRIGHT · FRAGILE · DO NOT STACK · AS PER ATTACHED LIST">
+            </div>
 
         </div>
     </div>
 </template>
 
-<!-- ══════════════════════════════════════════════════
-     SCRIPTS
-═══════════════════════════════════════════════════ -->
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// ── DATA ────────────────────────────────────────────────
 const AIRLINES   = <?= json_encode($airlineList)   ?>;
 const AIRPORTS   = <?= json_encode($airportList)   ?>;
 const CUSTOMERS  = <?= json_encode($customerList)  ?>;
 const SHIPPERS   = <?= json_encode($shipperList)   ?>;
 const CONSIGNEES = <?= json_encode($consigneeList) ?>;
+const BASE_URL   = '<?= BASE_URL ?>';
 
-// Pre-build <option> HTML for HAWB template dropdowns (built once, reused per row)
 const SHIPPER_OPTIONS = SHIPPERS.map(s =>
     `<option value="${s.id}" data-code="${s.code}" data-name="${s.name}">` +
     `${s.code} — ${s.name}</option>`
@@ -607,9 +595,7 @@ const CONSIGNEE_OPTIONS = CONSIGNEES.map(c =>
 
 let hawkIdx = 0;
 
-// ════════════════════════════════════════════════════════
-// AUTOCOMPLETE ENGINE
-// ════════════════════════════════════════════════════════
+// ── AUTOCOMPLETE ENGINE ──────────────────────────────────
 function acFilter(data, q, fields) {
     if (!q) return data.slice(0, 12);
     q = q.toLowerCase();
@@ -624,7 +610,7 @@ function renderDropdown(listEl, items, onSelect, renderFn) {
         div.className = 'ac-item' + (i === 0 ? ' active' : '');
         div.innerHTML = renderFn(item);
         div.addEventListener('mousedown', e => {
-            e.preventDefault(); // prevent blur before click
+            e.preventDefault();
             onSelect(item);
             listEl.classList.add('d-none');
         });
@@ -633,7 +619,6 @@ function renderDropdown(listEl, items, onSelect, renderFn) {
     listEl.classList.remove('d-none');
 }
 
-// Close all dropdowns on outside click
 document.addEventListener('click', e => {
     document.querySelectorAll('.autocomplete-list').forEach(el => {
         if (!el.closest('.position-relative')?.contains(e.target))
@@ -641,9 +626,7 @@ document.addEventListener('click', e => {
     });
 });
 
-// ════════════════════════════════════════════════════════
-// AIRLINE — type search
-// ════════════════════════════════════════════════════════
+// ── AIRLINE ──────────────────────────────────────────────
 document.getElementById('airlineSearch').addEventListener('input', function () {
     const items = acFilter(AIRLINES, this.value, ['code', 'name']);
     renderDropdown(
@@ -668,7 +651,6 @@ function applyAirline(item) {
     buildMawbNo();
 }
 
-// AIRLINE — dropdown select
 function selectFromDropdown(type, sel) {
     const opt = sel.options[sel.selectedIndex];
     if (!opt.value) return;
@@ -690,7 +672,6 @@ function selectFromDropdown(type, sel) {
     }
 }
 
-// MAWB No builder
 function buildMawbNo() {
     const prefix = document.getElementById('mawbPrefix').textContent.trim();
     const suffix = document.getElementById('mawbSuffix').value.trim();
@@ -699,9 +680,7 @@ function buildMawbNo() {
 }
 document.getElementById('mawbSuffix').addEventListener('input', buildMawbNo);
 
-// ════════════════════════════════════════════════════════
-// AIRPORT — type search
-// ════════════════════════════════════════════════════════
+// ── AIRPORT ──────────────────────────────────────────────
 function setupAirportSearch(inputId, hiddenId, listId, selectedId, selectId) {
     document.getElementById(inputId).addEventListener('input', function () {
         const items = acFilter(AIRPORTS, this.value, ['iata_code', 'name', 'city', 'country']);
@@ -724,7 +703,6 @@ function applyAirport(item, hiddenId, inputId, selectedId, selectId) {
          <small class="text-muted ms-1">${item.city || ''}, ${item.country || ''}</small>`;
 }
 
-// AIRPORT — dropdown select
 function selectAirportDropdown(type, sel) {
     const opt = sel.options[sel.selectedIndex];
     if (!opt.value) return;
@@ -743,9 +721,7 @@ function selectAirportDropdown(type, sel) {
 setupAirportSearch('originSearch', 'origin_id',      'originList', 'originSelected', 'originSelect');
 setupAirportSearch('destSearch',   'destination_id', 'destList',   'destSelected',   'destSelect');
 
-// ════════════════════════════════════════════════════════
-// CUSTOMER (MAWB Consignee) — type search
-// ════════════════════════════════════════════════════════
+// ── CUSTOMER ─────────────────────────────────────────────
 document.getElementById('customerSearch').addEventListener('input', function () {
     const items = acFilter(CUSTOMERS, this.value, ['code', 'name']);
     renderDropdown(
@@ -762,9 +738,7 @@ document.getElementById('customerSearch').addEventListener('input', function () 
     );
 });
 
-// ════════════════════════════════════════════════════════
-// HAWB — Shipper / Consignee type search
-// ════════════════════════════════════════════════════════
+// ── HAWB Shipper / Consignee autocomplete ────────────────
 function acHawbSearch(inputEl, type, idx) {
     const data   = type === 'shipper' ? SHIPPERS : CONSIGNEES;
     const listId = type === 'shipper' ? `shipList_${idx}` : `cneeList_${idx}`;
@@ -784,7 +758,6 @@ function acHawbSearch(inputEl, type, idx) {
     );
 }
 
-// HAWB — Shipper / Consignee dropdown select
 function selectHawbDropdown(type, idx, sel) {
     const opt = sel.options[sel.selectedIndex];
     if (!opt.value) return;
@@ -801,18 +774,7 @@ function selectHawbDropdown(type, idx, sel) {
     }
 }
 
-// ════════════════════════════════════════════════════════
-// ADD / REMOVE HAWB ROWS
-// ════════════════════════════════════════════════════════
-function suggestHawbNo(idx) {
-    const el = document.getElementById('hawbNo_' + idx);
-    if (el) el.placeholder = 'Đang tải...';
-    fetch('<?= BASE_URL ?>api/next_hawb.php')
-        .then(r => r.json())
-        .then(data => { if (el) el.value = data.hawb_no; })
-        .catch(() => { if (el) el.placeholder = 'Lỗi'; });
-}
-
+// ── ADD / REMOVE HAWB ROWS ───────────────────────────────
 function addHawbRow() {
     const idx = hawkIdx++;
     const num = document.querySelectorAll('.hawb-row').length + 1;
@@ -827,10 +789,9 @@ function addHawbRow() {
     document.getElementById('noHawbMsg').style.display = 'none';
     renumberHawbs();
     calcTotalPcs();
-    suggestHawbNo(idx);
 
-    // Focus first input of new row
-    document.getElementById('shipSearch_' + idx)?.focus();
+    // Focus ô HAWB No
+    document.getElementById('hawbNo_' + idx)?.focus();
 }
 
 function removeHawb(idx) {
@@ -855,16 +816,58 @@ function calcTotalPcs() {
     document.getElementById('totalPcsDisplay').textContent = total;
 }
 
-// ════════════════════════════════════════════════════════
-// FORM VALIDATION
-// ════════════════════════════════════════════════════════
+// ── HAWB No: Gợi ý + Check trùng ────────────────────────
+function suggestHawbNo(idx) {
+    const el = document.getElementById('hawbNo_' + idx);
+    if (!el) return;
+    el.disabled = true;
+    el.placeholder = 'Đang tải...';
+    fetch(BASE_URL + 'api/next_hawb.php')
+        .then(r => r.json())
+        .then(data => {
+            el.value = data.hawb_no;
+            el.disabled = false;
+            el.placeholder = 'VD: NYH2505001A';
+            checkHawbDuplicate(el, idx);
+        })
+        .catch(() => {
+            el.disabled = false;
+            el.placeholder = 'Lỗi tải số';
+        });
+}
+
+function checkHawbDuplicate(inputEl, idx) {
+    const val  = inputEl.value.trim();
+    const warn = document.getElementById('hawbNoWarn_' + idx);
+    if (!warn) return;
+    if (!val) { warn.innerHTML = ''; return; }
+
+    fetch(BASE_URL + 'api/check_hawb_duplicate.php?hawb_no=' + encodeURIComponent(val))
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'warn') {
+                warn.innerHTML = data.warnings.map(w =>
+                    `<span class="text-warning fw-semibold">
+                        <i class="bi bi-exclamation-triangle me-1"></i>${w}
+                     </span>`
+                ).join('<br>');
+            } else {
+                warn.innerHTML = `<span class="text-success" style="font-size:.75rem;">
+                    <i class="bi bi-check-circle me-1"></i>Số hợp lệ
+                </span>`;
+            }
+        })
+        .catch(() => { warn.innerHTML = ''; });
+}
+
+// ── FORM VALIDATION ──────────────────────────────────────
 document.getElementById('manifestForm').addEventListener('submit', function (e) {
     const checks = [
-        { id: 'airline_id',      label: 'Airline' },
-        { id: 'mawb_no',         label: 'MAWB No' },
-        { id: 'origin_id',       label: 'Origin Airport' },
-        { id: 'destination_id',  label: 'Destination Airport' },
-        { id: 'assigned_staff_id', label: 'Assigned Staff' },
+        { id: 'airline_id',        label: 'Airline' },
+        { id: 'mawb_no',           label: 'MAWB No' },
+        { id: 'origin_id',         label: 'Origin Airport' },
+        { id: 'destination_id',    label: 'Destination Airport' },
+        { id: 'assigned_staff_id', label: 'Assigned Staff' }, // ★ THÊM MỚI
     ];
     const missing = checks.filter(c => !document.getElementById(c.id)?.value);
     if (missing.length) {
@@ -872,6 +875,23 @@ document.getElementById('manifestForm').addEventListener('submit', function (e) 
         alert('Please fill in required fields:\n' + missing.map(c => '• ' + c.label).join('\n'));
         return;
     }
+
+    // Check HAWB No bắt buộc (nếu có row)
+    let missingHawb = false;
+    document.querySelectorAll('.hawb-no-input').forEach(el => {
+        if (!el.value.trim()) {
+            el.classList.add('is-invalid');
+            missingHawb = true;
+        } else {
+            el.classList.remove('is-invalid');
+        }
+    });
+    if (missingHawb) {
+        e.preventDefault();
+        alert('Vui lòng nhập HAWB No cho tất cả các HAWB (hoặc nhấn nút ↻ để gợi ý số).');
+        return;
+    }
+
     if (!document.querySelectorAll('.hawb-row').length) {
         if (!confirm('No HAWBs added. Save manifest without any HAWB?')) {
             e.preventDefault();
@@ -879,8 +899,8 @@ document.getElementById('manifestForm').addEventListener('submit', function (e) 
     }
 });
 
-// ── INIT ────────────────────────────────────────────────
-addHawbRow(); // add first HAWB row automatically
+// ── INIT ─────────────────────────────────────────────────
+addHawbRow();
 
 setTimeout(() => {
     document.querySelectorAll('.alert-dismissible').forEach(el =>
