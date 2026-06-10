@@ -15,7 +15,7 @@ if (!isManager()) {
 
 session_write_close();
 set_time_limit(120);
-ini_set('memory_limit', '256M');
+ini_set('memory_limit', '512M');
 
 require_once __DIR__ . '/../vendor/autoload.php';
 
