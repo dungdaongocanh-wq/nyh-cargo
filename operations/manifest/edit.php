@@ -1,4 +1,7 @@
 <?php
+ini_set('display_errors', 1);
+ini_set('display_startup_errors', 1);
+error_reporting(E_ALL);
 require_once __DIR__ . '/../../config/constants.php';
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/functions.php';
@@ -6,6 +9,7 @@ require_once __DIR__ . '/../../includes/auth.php';
 requireLogin();
 
 $db = getDB();
+mysqli_report(MYSQLI_REPORT_ERROR | MYSQLI_REPORT_STRICT);
 $id = (int)($_GET['id'] ?? 0);
 if (!$id) redirect(BASE_URL . 'operations/manifest/index.php');
 
@@ -26,12 +30,14 @@ function loadManifest(mysqli $db, int $id): ?array {
                c.phone        AS customer_phone,
                c.fax          AS customer_fax,
                c.usci_no      AS customer_usci,
-               c.contact_full AS customer_contact
+               c.contact_full AS customer_contact,
+               su.full_name   AS assigned_staff_name
         FROM manifests m
         LEFT JOIN airlines  al  ON m.airline_id     = al.id
         LEFT JOIN airports  ap1 ON m.origin_id      = ap1.id
         LEFT JOIN airports  ap2 ON m.destination_id = ap2.id
         LEFT JOIN customers c   ON m.customer_id    = c.id
+        LEFT JOIN users     su  ON m.assigned_staff_id = su.id
         WHERE m.id = ?
     ");
     $stmt->bind_param('i', $id);
@@ -55,7 +61,7 @@ function recalcManifestTotals(mysqli $db, int $mid): void {
 $manifest = loadManifest($db, $id);
 if (!$manifest) redirect(BASE_URL . 'operations/manifest/index.php');
 
-// Staff: chỉ xem manifest được phân cho họ
+// ★ THÊM MỚI: Staff chỉ xem manifest được phân cho họ
 if (currentUserRole() === ROLE_STAFF) {
     if ((int)($manifest['assigned_staff_id'] ?? 0) !== currentUserId()) {
         setFlash('danger', 'Access denied. This manifest is not assigned to you.');
@@ -75,6 +81,39 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ── Manager actions ──────────────────────────────────
     if (isManager()) {
+
+        if ($action === 'update_manifest' && $manifest['status'] !== 'completed') {
+            $airlineId     = (int)($_POST['airline_id']       ?? 0) ?: null;
+            $flightNo      = trim($_POST['flight_no']          ?? '');
+            $flightDate    = trim($_POST['flight_date']        ?? '');
+            $originId      = (int)($_POST['origin_id']         ?? 0) ?: null;
+            $destId        = (int)($_POST['destination_id']    ?? 0) ?: null;
+            $customerId    = (int)($_POST['customer_id']       ?? 0) ?: null;
+            // ★ THÊM MỚI: Assigned Staff có thể đổi từ modal
+            $assignedStaff = (int)($_POST['assigned_staff_id'] ?? 0) ?: null;
+
+            $flightDateVal = $flightDate !== '' ? $flightDate : null;
+
+            $stmt = $db->prepare("
+                UPDATE manifests SET
+                    airline_id        = ?,
+                    flight_no         = ?,
+                    flight_date       = ?,
+                    origin_id         = ?,
+                    destination_id    = ?,
+                    customer_id       = ?,
+                    assigned_staff_id = ?
+                WHERE id = ?
+            ");
+            $stmt->bind_param('issiiiii',
+                $airlineId, $flightNo, $flightDateVal,
+                $originId, $destId, $customerId, $assignedStaff, $id
+            );
+            $stmt->execute();
+            $stmt->close();
+            setFlash('success', 'Manifest info updated successfully.');
+            redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
+        }
 
         if ($action === 'confirm' && $manifest['status'] === 'draft') {
             $db->query("UPDATE manifests SET status='confirmed', confirmed_at=NOW() WHERE id=$id");
@@ -99,8 +138,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
         }
 
+        // ── Add HAWB ──────────────────────────────────────
         if ($action === 'add_hawb' && in_array($manifest['status'], ['draft','confirmed'])) {
-            $manualNo  = strtoupper(trim($_POST['hawb_no_manual'] ?? ''));
+            $manualNo = strtoupper(trim($_POST['hawb_no_manual'] ?? ''));
             if ($manualNo !== '') {
                 $hawbNoToUse = $manualNo;
                 $seqYear     = '';
@@ -113,6 +153,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $seqMonth    = $gen['seq_month'];
                 $seqNumber   = $gen['seq_number'];
             }
+
             $shipId    = (int)($_POST['shipper_id']   ?? 0) ?: null;
             $cneeId    = (int)($_POST['consignee_id'] ?? 0) ?: null;
             $commodity = trim($_POST['commodity']     ?? '');
@@ -160,7 +201,6 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $dim_h   = $_POST['dim_h']   ?? [];
         $dim_qty = $_POST['dim_qty'] ?? [];
 
-        // Xoá DIM groups cũ
         $db->query("DELETE FROM hawb_dim_groups WHERE hawb_id=$hid");
 
         $totalVW = 0.0;
@@ -234,6 +274,14 @@ $hawbList = $db->query("
 $shipperList   = $db->query("SELECT id,code,name FROM shippers   WHERE is_active=1 ORDER BY code")->fetch_all(MYSQLI_ASSOC);
 $consigneeList = $db->query("SELECT id,code,name FROM consignees WHERE is_active=1 ORDER BY code")->fetch_all(MYSQLI_ASSOC);
 
+// ── Dropdown data for Edit Manifest modal ─────────────────
+$airlineList  = $db->query("SELECT id,code,name FROM airlines  WHERE is_active=1 ORDER BY code")->fetch_all(MYSQLI_ASSOC);
+$airportList  = $db->query("SELECT id,iata_code,name FROM airports WHERE is_active=1 ORDER BY iata_code")->fetch_all(MYSQLI_ASSOC);
+$customerList = $db->query("SELECT id,code,name FROM customers WHERE is_active=1 ORDER BY code")->fetch_all(MYSQLI_ASSOC);
+
+// ★ THÊM MỚI: Danh sách staff cho Edit modal
+$staffList = $db->query("SELECT id,full_name,username FROM users WHERE role='staff' AND is_active=1 ORDER BY full_name")->fetch_all(MYSQLI_ASSOC);
+
 // ── Active weigh panel ────────────────────────────────────
 $activeWeighHawb = null;
 $existingDims    = [];
@@ -299,7 +347,6 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
             padding: .25rem .85rem; font-size: .82rem;
             display: inline-flex; align-items: center; gap: .4rem;
         }
-        /* Autocomplete */
         .autocomplete-list {
             position:absolute; z-index:9999; background:#fff;
             border:1px solid #dee2e6; border-radius:8px;
@@ -309,13 +356,11 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
         .autocomplete-list .ac-item { padding:.45rem .75rem; cursor:pointer; font-size:.83rem; }
         .autocomplete-list .ac-item:hover { background:#f0f4ff; }
         .ac-code { font-weight:700; color:#0d6efd; margin-right:.35rem; }
-        /* Combo field */
         .combo-field .form-control { border-bottom-left-radius:0; border-bottom-right-radius:0; }
         .combo-field .form-select  {
             border-top:none; border-top-left-radius:0; border-top-right-radius:0;
             font-size:.8rem; color:#6c757d;
         }
-        /* DIM row */
         .dim-row input { font-size:.85rem; }
         .dim-header { font-size:.72rem; font-weight:700; text-transform:uppercase;
                       color:#6c757d; letter-spacing:.04em; }
@@ -385,6 +430,12 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                     Weighed: <?= $weighedCount ?>/<?= $totalHawbs ?>
                 </span>
                 <?php endif; ?>
+                <?php /* ★ THÊM MỚI: Hiển thị staff phụ trách trên header */ ?>
+                <?php if (!empty($manifest['assigned_staff_name'])): ?>
+                <span class="meta-pill">
+                    <i class="bi bi-person-badge"></i><?= e($manifest['assigned_staff_name']) ?>
+                </span>
+                <?php endif; ?>
             </div>
         </div>
 
@@ -396,20 +447,28 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                    target="_blank" class="btn btn-light btn-sm">
                     <i class="bi bi-printer me-1"></i>Print Manifest
                 </a>
+                <?php if ($canPrintLabel): ?>
+                <a href="<?= BASE_URL ?>print/label_print.php?manifest_id=<?= $id ?>"
+                   target="_blank" class="btn btn-warning btn-sm">
+                    <i class="bi bi-tag me-1"></i>Print Labels
+                </a>
+                <?php else: ?>
+                <button class="btn btn-warning btn-sm" disabled
+                        title="Pieces mismatch — cannot print labels">
+                    <i class="bi bi-tag me-1"></i>Labels ⚠️
+                </button>
+                <?php endif; ?>
+                <a href="<?= BASE_URL ?>print/weight_slip.php?manifest_id=<?= $id ?>"
+                   target="_blank" class="btn btn-info btn-sm">
+                    <i class="bi bi-card-checklist me-1"></i>In phiếu cân
+                </a>
                 <?php endif; ?>
 
-                <?php if ($manifest['status'] !== 'draft'): ?>
-                    <?php if ($canPrintLabel): ?>
-                    <a href="<?= BASE_URL ?>print/label_print.php?manifest_id=<?= $id ?>"
-                       target="_blank" class="btn btn-warning btn-sm">
-                        <i class="bi bi-tag me-1"></i>Print Labels
-                    </a>
-                    <?php else: ?>
-                    <button class="btn btn-warning btn-sm" disabled
-                            title="Pieces mismatch — cannot print labels">
-                        <i class="bi bi-tag me-1"></i>Labels ⚠️
-                    </button>
-                    <?php endif; ?>
+                <?php if (isManager() && $manifest['status'] !== 'completed'): ?>
+                <button class="btn btn-outline-light btn-sm"
+                        data-bs-toggle="modal" data-bs-target="#modalEditManifest">
+                    <i class="bi bi-pencil-square me-1"></i>Edit Info
+                </button>
                 <?php endif; ?>
 
                 <?php if (isManager() && $manifest['status'] === 'draft'): ?>
@@ -569,25 +628,23 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                         </td>
                         <td class="text-end pe-2">
                             <div class="d-flex gap-1 justify-content-end">
-                                <!-- GW/CW Weigh -->
                                 <a href="?id=<?= $id ?>&weigh=<?= $h['id'] ?>"
                                    class="btn btn-sm btn-action <?= $h['is_weighed']?'btn-outline-success':'btn-outline-warning' ?>"
                                    title="<?= $h['is_weighed']?'Edit Weight':'Weigh Now' ?>"
                                    style="font-size:.7rem;font-weight:700;padding:2px 7px;white-space:nowrap;">
                                     GW/CW
                                 </a>
-                                <!-- Print HAWB -->
-                                <a href="<?= BASE_URL ?>print/hawb_print.php?id=<?= $h['id'] ?>"
-                                   target="_blank"
-                                   class="btn btn-sm btn-outline-secondary btn-action" title="Print HAWB">
-                                    <i class="bi bi-printer"></i>
+                                <!-- Edit HAWB (Manager only) -->
+                                <?php if (isManager()): ?>
+                                <a href="<?= BASE_URL ?>operations/hawb/edit.php?id=<?= $h['id'] ?>"
+                                   class="btn btn-sm btn-outline-primary btn-action" title="Edit HAWB">
+                                    <i class="bi bi-pencil"></i>
                                 </a>
-                                <!-- Excel -->
+                                <?php endif; ?>
                                 <a href="<?= BASE_URL ?>print/hawb_excel.php?id=<?= $h['id'] ?>"
                                    class="btn btn-sm btn-outline-success btn-action" title="Download Excel">
                                     <i class="bi bi-file-earmark-excel"></i>
                                 </a>
-                                <!-- Delete -->
                                 <?php if (isManager() && $manifest['status'] !== 'completed'): ?>
                                 <form method="POST" class="d-inline"
                                       onsubmit="return confirm('Remove HAWB <?= e($h['hawb_no']) ?>?')">
@@ -634,7 +691,6 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
         </div>
         <div class="card-body">
 
-            <!-- HAWB summary -->
             <div class="row g-2 mb-3">
                 <div class="col-6">
                     <div class="bg-light rounded p-2 small">
@@ -662,7 +718,6 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                 <input type="hidden" name="action"  value="save_weigh">
                 <input type="hidden" name="hawb_id" value="<?= $activeWeighHawb['id'] ?>">
 
-                <!-- ── TOTAL GW ──────────────────────────── -->
                 <div class="mb-3">
                     <label class="form-label fw-bold">
                         Total Gross Weight — toàn bộ HAWB
@@ -685,7 +740,6 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                     </small>
                 </div>
 
-                <!-- ── DIM GROUPS ────────────────────────── -->
                 <div class="d-flex justify-content-between align-items-center mb-2">
                     <div class="fw-bold small">
                         DIM Groups
@@ -699,7 +753,6 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                     </button>
                 </div>
 
-                <!-- Column headers -->
                 <div class="row g-1 mb-1 px-1">
                     <div class="col-2"><span class="dim-header">L (cm)</span></div>
                     <div class="col-2"><span class="dim-header">W (cm)</span></div>
@@ -767,10 +820,8 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                     <?php endforeach; ?>
                 </div>
 
-                <!-- Qty check indicator -->
                 <div id="qtyCheck" class="small mt-1 mb-1 ps-1"></div>
 
-                <!-- ── LIVE RESULT ───────────────────────── -->
                 <div class="p-3 bg-success bg-opacity-10 border border-success rounded-3 my-3">
                     <div class="row text-center g-0">
                         <div class="col-4">
@@ -802,20 +853,14 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                         VW = Σ(L×W×H÷6000 × qty) &nbsp;·&nbsp;
                         CW = MAX(GW,VW) → làm tròn lên 0.5 kg
                     </div>
-                    <!-- DIM summary string -->
                     <div id="dimSummary" class="text-center mt-1"
                          style="font-size:.72rem;color:#0d6efd;font-weight:600;"></div>
                 </div>
 
-                <!-- Save buttons -->
                 <div class="d-flex gap-2">
                     <button type="submit" class="btn btn-success flex-grow-1 fw-bold">
                         <i class="bi bi-floppy me-1"></i>Save Weight
                     </button>
-                    <a href="<?= BASE_URL ?>print/hawb_print.php?id=<?= $activeWeighHawb['id'] ?>"
-                       target="_blank" class="btn btn-outline-secondary" title="Print HAWB">
-                        <i class="bi bi-printer"></i>
-                    </a>
                     <a href="<?= BASE_URL ?>print/hawb_excel.php?id=<?= $activeWeighHawb['id'] ?>"
                        class="btn btn-outline-success" title="Download Excel">
                         <i class="bi bi-file-earmark-excel"></i>
@@ -830,6 +875,112 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
 </div><!-- /row -->
 </main>
 </div>
+
+<!-- ══ MODAL: EDIT MANIFEST INFO ═════════════════════════ -->
+<?php if (isManager() && $manifest['status'] !== 'completed'): ?>
+<div class="modal fade" id="modalEditManifest" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <form method="POST" class="modal-content">
+            <input type="hidden" name="action" value="update_manifest">
+            <div class="modal-header border-0">
+                <h5 class="modal-title fw-bold">
+                    <i class="bi bi-pencil-square text-primary me-2"></i>
+                    Edit Manifest — <?= e($manifest['mawb_no'] ?? '') ?>
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row g-3">
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Airline</label>
+                        <select name="airline_id" class="form-select">
+                            <option value="">— Select Airline —</option>
+                            <?php foreach ($airlineList as $al): ?>
+                            <option value="<?= $al['id'] ?>"
+                                <?= $manifest['airline_id'] == $al['id'] ? 'selected' : '' ?>>
+                                <?= e($al['code']) ?> — <?= e($al['name']) ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Flight No</label>
+                        <input type="text" name="flight_no" class="form-control"
+                               value="<?= e($manifest['flight_no'] ?? '') ?>"
+                               placeholder="e.g. OZ734">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Flight Date</label>
+                        <input type="date" name="flight_date" class="form-control"
+                               value="<?= e($manifest['flight_date'] ?? '') ?>">
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Origin</label>
+                        <select name="origin_id" class="form-select">
+                            <option value="">— Select Origin —</option>
+                            <?php foreach ($airportList as $ap): ?>
+                            <option value="<?= $ap['id'] ?>"
+                                <?= $manifest['origin_id'] == $ap['id'] ? 'selected' : '' ?>>
+                                <?= e($ap['iata_code']) ?> — <?= e($ap['name']) ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label class="form-label fw-semibold">Destination</label>
+                        <select name="destination_id" class="form-select">
+                            <option value="">— Select Destination —</option>
+                            <?php foreach ($airportList as $ap): ?>
+                            <option value="<?= $ap['id'] ?>"
+                                <?= $manifest['destination_id'] == $ap['id'] ? 'selected' : '' ?>>
+                                <?= e($ap['iata_code']) ?> — <?= e($ap['name']) ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">Customer (MAWB Consignee)</label>
+                        <select name="customer_id" class="form-select">
+                            <option value="">— None —</option>
+                            <?php foreach ($customerList as $cu): ?>
+                            <option value="<?= $cu['id'] ?>"
+                                <?= $manifest['customer_id'] == $cu['id'] ? 'selected' : '' ?>>
+                                <?= e($cu['code']) ?> — <?= e($cu['name']) ?>
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <!-- ★ THÊM MỚI: Assigned Staff trong Edit modal -->
+                    <div class="col-md-6">
+                        <label class="form-label fw-semibold">
+                            Assigned Staff
+                            <span class="badge bg-info text-dark ms-1" style="font-size:.65rem;">Phân công</span>
+                        </label>
+                        <select name="assigned_staff_id" class="form-select">
+                            <option value="">— None —</option>
+                            <?php foreach ($staffList as $s): ?>
+                            <option value="<?= $s['id'] ?>"
+                                <?= $manifest['assigned_staff_id'] == $s['id'] ? 'selected' : '' ?>>
+                                <?= e($s['full_name']) ?> (<?= e($s['username']) ?>)
+                            </option>
+                            <?php endforeach; ?>
+                        </select>
+                        <small class="text-muted">
+                            <i class="bi bi-shield-lock me-1"></i>Staff được phân mới thấy manifest này.
+                        </small>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                <button type="submit" class="btn btn-primary px-4">
+                    <i class="bi bi-floppy me-1"></i>Save Changes
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
 
 <!-- ══ MODAL: ADD HAWB ═══════════════════════════════════ -->
 <?php if (isManager() && $manifest['status'] !== 'completed'): ?>
@@ -846,22 +997,26 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
             </div>
             <div class="modal-body">
                 <div class="row g-3">
-                    <!-- HAWB No -->
+
                     <div class="col-md-12">
                         <label class="form-label fw-semibold">
                             HAWB No
-                            <span class="text-muted fw-normal">(để trống = tự động tạo)</span>
+                            <span class="text-muted fw-normal small">(để trống = tự động tạo)</span>
                         </label>
                         <div class="input-group">
                             <input type="text" name="hawb_no_manual" id="m_hawbNo"
                                    class="form-control text-uppercase fw-bold"
-                                   placeholder="Để trống để tự động tạo"
-                                   autocomplete="off" style="letter-spacing:.05em;">
+                                   placeholder="Để trống = tự động tạo"
+                                   autocomplete="off"
+                                   style="letter-spacing:.05em;"
+                                   oninput="this.value=this.value.toUpperCase()"
+                                   onblur="checkModalHawbDuplicate()">
                             <button type="button" class="btn btn-outline-secondary"
-                                    onclick="suggestModalHawbNo()" title="Lấy số gợi ý">
+                                    onclick="suggestModalHawbNo()" title="Gợi ý số tự động">
                                 <i class="bi bi-arrow-clockwise me-1"></i>Gợi ý
                             </button>
                         </div>
+                        <div id="m_hawbNoWarn" class="mt-1" style="font-size:.75rem;"></div>
                         <small class="text-muted">
                             <i class="bi bi-info-circle me-1"></i>
                             Origin/Destination tự động lấy từ manifest.
@@ -959,6 +1114,7 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
 const SHIPPERS    = <?= json_encode($shipperList)   ?>;
 const CONSIGNEES  = <?= json_encode($consigneeList) ?>;
 const TOTAL_PIECES= <?= $activeWeighHawb ? (int)$activeWeighHawb['no_of_pieces'] : 0 ?>;
+const BASE_URL    = '<?= BASE_URL ?>';
 let dimCount      = <?= count($existingDims) ?>;
 
 // ════════════════════════════════════════════════════════
@@ -1020,17 +1176,56 @@ function modalSelectParty(type, sel) {
     }
 }
 
+// ── HAWB No: gợi ý số tự động + check trùng ─────────────
 function suggestModalHawbNo() {
     const el = document.getElementById('m_hawbNo');
-    if (el) el.placeholder = 'Đang tải...';
-    fetch('<?= BASE_URL ?>api/next_hawb.php')
+    if (!el) return;
+    el.disabled = true;
+    el.placeholder = 'Đang tải...';
+    fetch(BASE_URL + 'api/next_hawb.php')
         .then(r => r.json())
-        .then(data => { if (el) { el.value = data.hawb_no; el.placeholder = ''; } })
-        .catch(() => { if (el) el.placeholder = 'Lỗi tải số'; });
+        .then(data => {
+            el.value = data.hawb_no;
+            el.disabled = false;
+            el.placeholder = '';
+            checkModalHawbDuplicate();
+        })
+        .catch(() => {
+            el.disabled = false;
+            el.placeholder = 'Lỗi — thử lại';
+        });
 }
 
-document.getElementById('modalAddHawb')?.addEventListener('show.bs.modal', function() {
-    suggestModalHawbNo();
+function checkModalHawbDuplicate() {
+    const el   = document.getElementById('m_hawbNo');
+    const warn = document.getElementById('m_hawbNoWarn');
+    if (!el || !warn) return;
+    const val = el.value.trim();
+    if (!val) { warn.innerHTML = ''; return; }
+    fetch(BASE_URL + 'api/check_hawb_duplicate.php?hawb_no=' + encodeURIComponent(val))
+        .then(r => r.json())
+        .then(data => {
+            if (data.status === 'warn') {
+                warn.innerHTML = data.warnings.map(w =>
+                    `<span class="text-warning fw-semibold">
+                        <i class="bi bi-exclamation-triangle me-1"></i>${w}
+                    </span>`
+                ).join('<br>');
+            } else {
+                warn.innerHTML = `<span class="text-success" style="font-size:.75rem;">
+                    <i class="bi bi-check-circle me-1"></i>Số hợp lệ
+                </span>`;
+            }
+        })
+        .catch(() => { warn.innerHTML = ''; });
+}
+
+// Reset modal khi đóng
+document.getElementById('modalAddHawb')?.addEventListener('hidden.bs.modal', function () {
+    const el = document.getElementById('m_hawbNo');
+    if (el) { el.value = ''; el.placeholder = 'Để trống = tự động tạo'; }
+    const warn = document.getElementById('m_hawbNoWarn');
+    if (warn) warn.innerHTML = '';
 });
 
 // ════════════════════════════════════════════════════════
@@ -1070,11 +1265,9 @@ function calcLive() {
     document.getElementById('liveVW').textContent = totalVW.toFixed(2);
     document.getElementById('liveCW').textContent = cw.toFixed(2);
 
-    // DIM summary
     const summEl = document.getElementById('dimSummary');
     if (summEl) summEl.textContent = summaries.join('  +  ');
 
-    // Qty check
     const qcEl = document.getElementById('qtyCheck');
     if (qcEl && TOTAL_PIECES > 0) {
         if (totalQty === 0) {
@@ -1099,8 +1292,6 @@ function calcLive() {
 
 function addDimGroup() {
     const idx = dimCount++;
-
-    // Tính remaining qty
     let usedQty = 0;
     document.querySelectorAll('.dim-qty').forEach(el => {
         usedQty += parseInt(el.value) || 0;
@@ -1146,7 +1337,6 @@ function addDimGroup() {
         </div>
     </div>`;
     document.getElementById('dimContainer').insertAdjacentHTML('beforeend', html);
-    // Focus L input của row mới
     const newRow = document.getElementById('dimRow_' + idx);
     newRow?.querySelector('.dim-input')?.focus();
     calcLive();
@@ -1157,10 +1347,8 @@ function removeDimGroup(idx) {
     calcLive();
 }
 
-// Init
 <?php if ($activeWeighHawb): ?>calcLive();<?php endif; ?>
 
-// Auto dismiss alerts
 setTimeout(() => {
     document.querySelectorAll('.alert-dismissible').forEach(el =>
         bootstrap.Alert.getOrCreateInstance(el).close());
