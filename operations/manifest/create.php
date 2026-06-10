@@ -16,6 +16,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $origin_id   = (int)($_POST['origin_id']               ?? 0);
     $dest_id     = (int)($_POST['destination_id']          ?? 0);
     $customer_id = (int)($_POST['customer_id']             ?? 0) ?: null;
+    $assigned_staff_id = (int)($_POST['assigned_staff_id'] ?? 0) ?: null;
     $notes       = trim($_POST['notes']                    ?? '');
     $status      = isset($_POST['confirm_now']) ? 'confirmed' : 'draft';
 
@@ -26,6 +27,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (!$flight_date) $errors[] = 'Flight date is required.';
     if (!$origin_id)   $errors[] = 'Origin airport is required.';
     if (!$dest_id)     $errors[] = 'Destination airport is required.';
+    if (!$assigned_staff_id) $errors[] = 'Assigned Staff is required.';
 
     if (!$errors) {
         $chk = $db->prepare("SELECT id FROM manifests WHERE mawb_no=?");
@@ -46,12 +48,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $stmt = $db->prepare("
         INSERT INTO manifests
             (mawb_no,airline_id,flight_no,flight_date,origin_id,destination_id,
-             customer_id,notes,status,confirmed_at,created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?)
+             customer_id,notes,status,confirmed_at,created_by,assigned_staff_id)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
     ");
-    $stmt->bind_param('sississsssi',
+    $stmt->bind_param('sississsssii',
         $mawb_no,$airline_id,$flight_no,$flight_date,$origin_id,$dest_id,
-        $customer_id,$notes,$status,$confirmedAt,$by
+        $customer_id,$notes,$status,$confirmedAt,$by,$assigned_staff_id
     );
 
     if (!$stmt->execute()) {
@@ -126,6 +128,7 @@ $airports_rs  = $db->query("SELECT id,iata_code,name,city,country FROM airports 
 $customers_rs = $db->query("SELECT id,code,name FROM customers  WHERE is_active=1 ORDER BY code");
 $shippers_rs  = $db->query("SELECT id,code,name FROM shippers   WHERE is_active=1 ORDER BY code");
 $consignees_rs= $db->query("SELECT id,code,name FROM consignees WHERE is_active=1 ORDER BY code");
+$staffList    = $db->query("SELECT id,full_name,username FROM users WHERE role='staff' AND is_active=1 ORDER BY full_name")->fetch_all(MYSQLI_ASSOC);
 
 $airlineList  = $airlines_rs->fetch_all(MYSQLI_ASSOC);
 $airportList  = $airports_rs->fetch_all(MYSQLI_ASSOC);
@@ -376,6 +379,23 @@ $pageTitle = 'New Manifest';
             <div class="col-md-2">
                 <label class="form-label">Notes</label>
                 <input type="text" name="notes" class="form-control" placeholder="Optional">
+            </div>
+
+            <!-- ASSIGNED STAFF -->
+            <div class="col-md-4">
+                <label class="form-label required">
+                    Assigned Staff
+                    <span class="badge bg-danger ms-1" style="font-size:.65rem;letter-spacing:.03em;">Bắt buộc</span>
+                </label>
+                <select name="assigned_staff_id" id="assigned_staff_id" class="form-select" required>
+                    <option value="">— Chọn nhân viên phụ trách —</option>
+                    <?php foreach ($staffList as $s): ?>
+                    <option value="<?= $s['id'] ?>"><?= e($s['full_name']) ?> (<?= e($s['username']) ?>)</option>
+                    <?php endforeach; ?>
+                </select>
+                <small class="text-muted">
+                    <i class="bi bi-shield-lock me-1"></i>Chỉ staff được phân mới nhìn thấy lô này.
+                </small>
             </div>
 
         </div><!-- /row -->
@@ -844,6 +864,7 @@ document.getElementById('manifestForm').addEventListener('submit', function (e) 
         { id: 'mawb_no',         label: 'MAWB No' },
         { id: 'origin_id',       label: 'Origin Airport' },
         { id: 'destination_id',  label: 'Destination Airport' },
+        { id: 'assigned_staff_id', label: 'Assigned Staff' },
     ];
     const missing = checks.filter(c => !document.getElementById(c.id)?.value);
     if (missing.length) {

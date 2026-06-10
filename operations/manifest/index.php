@@ -35,6 +35,10 @@ $where = ["1=1"];
 if ($search)     $where[] = "(m.mawb_no LIKE '%$search%' OR m.flight_no LIKE '%$search%' OR c.name LIKE '%$search%')";
 if ($filterStat) $where[] = "m.status='$filterStat'";
 if ($filterDate) $where[] = "m.flight_date='$filterDate'";
+// Staff chỉ thấy manifest được phân cho mình
+if (currentUserRole() === ROLE_STAFF) {
+    $where[] = "m.assigned_staff_id = " . currentUserId();
+}
 $whereStr = implode(' AND ', $where);
 
 $sql = "
@@ -46,6 +50,7 @@ $sql = "
            c.name        AS customer_name,
            c.code        AS customer_code,
            u.full_name   AS created_by_name,
+           su.full_name  AS assigned_staff_name,
            COUNT(h.id)   AS hawb_count,
            SUM(h.no_of_pieces)       AS total_pcs,
            SUM(h.gross_weight)       AS total_gw,
@@ -57,6 +62,7 @@ $sql = "
     LEFT JOIN airports  ap2 ON m.destination_id   = ap2.id
     LEFT JOIN customers c   ON m.customer_id      = c.id
     LEFT JOIN users     u   ON m.created_by       = u.id
+    LEFT JOIN users     su  ON m.assigned_staff_id = su.id
     LEFT JOIN hawbs     h   ON m.id               = h.manifest_id
     WHERE $whereStr
     GROUP BY m.id
@@ -166,6 +172,9 @@ $pageTitle = 'Manifests';
                         <th>HAWBs</th>
                         <th>GW / CW</th>
                         <th>Status</th>
+                        <?php if (isManager()): ?>
+                        <th>Staff</th>
+                        <?php endif; ?>
                         <th>Weighed</th>
                         <th class="text-end pe-3">Actions</th>
                     </tr>
@@ -204,6 +213,11 @@ $pageTitle = 'Manifests';
                         </small>
                     </td>
                     <td><?= statusBadge($row['status']) ?></td>
+                    <?php if (isManager()): ?>
+                    <td>
+                        <small><?= e($row['assigned_staff_name'] ?? '—') ?></small>
+                    </td>
+                    <?php endif; ?>
                     <td>
                         <?php if ($hawbCount === 0): ?>
                         <span class="text-muted small">—</span>
@@ -257,7 +271,7 @@ $pageTitle = 'Manifests';
                 </tr>
                 <?php endwhile; ?>
                 <?php if ($rows->num_rows === 0): ?>
-                <tr><td colspan="10" class="text-center py-5 text-muted">
+                <tr><td colspan="<?= isManager() ? 11 : 10 ?>" class="text-center py-5 text-muted">
                     <i class="bi bi-inbox fs-2 d-block mb-2 opacity-25"></i>
                     No manifests found.
                     <?php if (isManager()): ?>
