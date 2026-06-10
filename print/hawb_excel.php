@@ -1,4 +1,6 @@
 <?php
+ini_set('display_errors', 1);
+error_reporting(E_ALL);
 require_once __DIR__ . '/../config/constants.php';
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/functions.php';
@@ -29,7 +31,9 @@ $stmt = $db->prepare("
            cn.city   AS cnee_city,       cn.phone   AS cnee_phone,
            cn.usci_no AS cnee_usci,      cn.account_no AS cnee_acct,
            ap1.iata_code AS origin_code,
+           ap1.name      AS origin_fullname,
            ap2.iata_code AS dest_code,
+           ap2.name      AS dest_fullname,
            m.mawb_no, m.flight_no, m.flight_date,
            al.code AS airline_code, al.name AS airline_name
     FROM hawbs h
@@ -87,55 +91,56 @@ if ($h['notify_party']  !== '') $hp[] = $h['notify_party'];
 if ($h['handling_info'] !== '') $hp[] = $h['handling_info'];
 
 $cellData = [
-    'mawb_no'             => $h['mawb_no'],
-    'hawb_no'             => $h['hawb_no'],
-    'hawb_no_footer'      => $h['hawb_no'],
-    'shipper_name'        => strtoupper($h['shipper_name']),
-    'shipper_address'     => strtoupper($h['shipper_address']),
-    'shipper_city'        => strtoupper($h['shipper_city']),
-    'shipper_phone'       => $h['shipper_phone'],
-    'consignee_name'      => strtoupper($h['cnee_name']),
-    'consignee_address'   => strtoupper($h['cnee_address']),
-    'consignee_city'      => strtoupper($h['cnee_city']),
-    'consignee_phone'     => $h['cnee_phone'],
-    'consignee_acct'      => $h['cnee_acct'],
-    'consignee_usci'      => $h['cnee_usci'],
-    'notify_party'        => $h['notify_party'],
-    'issuing_carrier'     => strtoupper($h['airline_name']),
-    'agent_name'          => COMPANY_NAME,
-    'agent_iata'          => defined('COMPANY_IATA') ? (string)COMPANY_IATA : '',
-    'airport_departure'   => $h['origin_code'],
-    'airport_dest'        => $h['dest_code'],
-    'routing_by1'         => $h['airline_code'],
-    'flight_no'           => $h['flight_no'],
-    'flight_date'         => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
-    'payment_term'        => $h['payment_term']            ?: 'PP',
-    'currency'            => $h['currency']                ?: 'USD',
-    'rate_class'          => $h['rate_class']              ?: 'Q',
-    'commodity_item_no'   => $h['commodity_item_no'],
-    'declared_carriage'   => $h['declared_value_carriage'] ?: 'NVD',
-    'declared_customs'    => $h['declared_value_customs']  ?: 'AS PER INV',
-    'amount_insurance'    => $h['amount_insurance']        ?: 'XXX',
-    'accounting_info'     => $h['accounting_info']         ?: 'FREIGHT PREPAID',
-    'no_of_pieces'        => (string)(int)$h['no_of_pieces'],
-    'no_of_pieces_footer' => (string)(int)$h['no_of_pieces'],
-    'gross_weight'        => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
-    'gross_weight_footer' => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
-    'gross_weight_unit'   => 'K',
-    'volume_weight'       => (float)$h['volume_weight']     > 0 ? fmtNum($h['volume_weight'])     : '',
-    'chargeable_weight'   => (float)$h['chargeable_weight'] > 0 ? fmtNum($h['chargeable_weight']) : '',
-    'commodity_line1'     => $h['commodity'],
-    'commodity_line2' => '', 'commodity_line3' => '',
-    'commodity_line4' => '', 'commodity_line5' => '',
-    'dim_info'            => implode('  ', $dimParts),
-    'handling_info'       => implode("\n", $hp),
-    'execution_place'     => $h['origin_code'],
-    'execution_date'      => date('d-M-Y'),
-    'signature_origin'    => COMPANY_NAME,
+    'mawb_no'               => $h['mawb_no'],
+    'hawb_no'               => $h['hawb_no'],
+    'hawb_no_footer'        => $h['hawb_no'],
+    'shipper_name'          => strtoupper($h['shipper_name']),
+    'shipper_address'       => strtoupper($h['shipper_address']),
+    'shipper_city'          => strtoupper($h['shipper_city']),
+    'shipper_phone'         => $h['shipper_phone'],
+    'consignee_name'        => strtoupper($h['cnee_name']),
+    'consignee_address'     => strtoupper($h['cnee_address']),
+    'consignee_city'        => strtoupper($h['cnee_city']),
+    'consignee_phone'       => $h['cnee_phone'],
+    'consignee_acct'        => $h['cnee_acct'],
+    'consignee_usci'        => $h['cnee_usci'],
+    'notify_party'          => $h['notify_party'],
+    'issuing_carrier'       => strtoupper($h['airline_code']),
+    'agent_name'            => COMPANY_NAME,
+    'agent_iata'            => defined('COMPANY_IATA') ? (string)COMPANY_IATA : '',
+    'airport_departure'     => $h['origin_fullname'],
+    'airport_dest'          => $h['dest_code'],
+    'airport_dest_fullname' => $h['dest_fullname'],
+    'routing_by1'           => $h['airline_code'],
+    'flight_no'             => $h['flight_no'],
+    'flight_date'           => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
+    'flight_date_footer'    => $h['flight_date'] !== '' ? date('d-M-y', strtotime($h['flight_date'])) : '',
+    'payment_term'          => $h['payment_term']            ?: 'PP',
+    'currency'              => $h['currency']                ?: 'USD',
+    'rate_class'            => $h['rate_class']              ?: 'Q',
+    'commodity_item_no'     => $h['commodity_item_no'],
+    'declared_carriage'     => $h['declared_value_carriage'] ?: 'NVD',
+    'declared_customs'      => $h['declared_value_customs']  ?: 'AS PER INV',
+    'amount_insurance'      => $h['amount_insurance']        ?: 'XXX',
+    'accounting_info'       => $h['accounting_info']         ?: 'FREIGHT PREPAID',
+    'no_of_pieces'          => (string)(int)$h['no_of_pieces'],
+    'no_of_pieces_footer'   => (string)(int)$h['no_of_pieces'],
+    'gross_weight'          => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
+    'gross_weight_footer'   => (float)$h['gross_weight']      > 0 ? fmtNum($h['gross_weight'])      : '',
+    'gross_weight_unit'     => 'K',
+    'volume_weight'         => (float)$h['volume_weight']     > 0 ? fmtNum($h['volume_weight'])     : '',
+    'chargeable_weight'     => (float)$h['chargeable_weight'] > 0 ? fmtNum($h['chargeable_weight']) : '',
+    'commodity_line1'       => $h['commodity'],
+    'commodity_line2'       => '', 'commodity_line3' => '',
+    'commodity_line4'       => '', 'commodity_line5' => '',
+    'dim_info'              => implode('  ', $dimParts),
+    'handling_info'         => implode("\n", $hp),
+    'execution_place'       => $h['origin_code'],
+    'execution_date'        => date('d-M-Y'),
+    'signature_origin'      => COMPANY_NAME,
 ];
 
-// Build finalCellMap (UPPERCASE ref => value, chỉ giữ cell có giá trị)
-// Hỗ trợ cả string lẫn array trong map (1 field → nhiều ô)
+// ── Build finalCellMap ───────────────────────────────────────────────────────
 $finalCellMap = [];
 foreach ($map as $field => $cell) {
     $cells = is_array($cell) ? $cell : [$cell];
@@ -232,19 +237,15 @@ function addSharedString(string $value, array &$sharedStrings, array &$ssValueTo
 $sheetDom = new DOMDocument();
 $sheetDom->loadXML($sheetRaw);
 
-// ── Bước 1: Ghi các cell ĐÃ TỒN TẠI trong sheet ─────────────────────────────
+// ── Bước 1: Ghi các cell ĐÃ TỒN TẠI — dùng XPath thay vì duyệt toàn bộ ──────
 $writtenRefs = [];
-$cellNodes   = $sheetDom->getElementsByTagName('c');
+$xpath = new DOMXPath($sheetDom);
 
-// Snapshot vào mảng để tránh lỗi live NodeList khi sửa DOM
-$cellNodeList = [];
-foreach ($cellNodes as $cn) $cellNodeList[] = $cn;
+foreach ($finalCellMap as $ref => $value) {
+    $nodes = $xpath->query("//*[local-name()='c'][@r='" . $ref . "']");
+    if ($nodes->length === 0) continue;
 
-foreach ($cellNodeList as $cellNode) {
-    $ref = strtoupper($cellNode->getAttribute('r'));
-    if (!isset($finalCellMap[$ref])) continue;
-
-    $value             = (string)$finalCellMap[$ref];
+    $cellNode          = $nodes->item(0);
     $writtenRefs[$ref] = true;
 
     $toRemove = [];
@@ -274,7 +275,7 @@ foreach ($cellNodeList as $cellNode) {
     }
 }
 
-// ── Bước 2: Tạo mới các cell CHƯA TỒN TẠI (nhóm theo row, 1 lần) ────────────
+// ── Bước 2: Tạo mới các cell CHƯA TỒN TẠI ───────────────────────────────────
 $missingCells = [];
 foreach ($finalCellMap as $ref => $value) {
     if (isset($writtenRefs[$ref])) continue;
@@ -283,7 +284,6 @@ foreach ($finalCellMap as $ref => $value) {
 }
 
 if (!empty($missingCells)) {
-    // Nhóm theo row number
     $cellsByRow = [];
     foreach ($missingCells as $ref => $value) {
         preg_match('/^([A-Z]+)(\d+)$/', $ref, $m);
@@ -293,9 +293,7 @@ if (!empty($missingCells)) {
 
     $sheetDataNodes = $sheetDom->getElementsByTagName('sheetData');
     if ($sheetDataNodes->length > 0) {
-        $sheetData = $sheetDataNodes->item(0);
-
-        // Snapshot danh sách row hiện có
+        $sheetData    = $sheetDataNodes->item(0);
         $existingRows = [];
         foreach ($sheetData->childNodes as $child) {
             if ($child->nodeName === 'row')
@@ -304,7 +302,6 @@ if (!empty($missingCells)) {
 
         foreach ($cellsByRow as $rowNum => $cells) {
             if (isset($existingRows[$rowNum])) {
-                // Row đã tồn tại → chèn cell mới vào đúng vị trí theo thứ tự cột
                 $rowNode    = $existingRows[$rowNum];
                 $existingCs = [];
                 foreach ($rowNode->childNodes as $cn) {
@@ -352,7 +349,6 @@ if (!empty($missingCells)) {
                     }
                 }
             } else {
-                // Row chưa tồn tại → tạo row mới
                 $newRow = $sheetDom->createElement('row');
                 $newRow->setAttribute('r', $rowNum);
 
@@ -378,7 +374,6 @@ if (!empty($missingCells)) {
                     $newRow->appendChild($cn);
                 }
 
-                // Chèn row vào đúng vị trí theo thứ tự row number
                 $inserted = false;
                 foreach ($sheetData->childNodes as $sibling) {
                     if ($sibling->nodeName !== 'row') continue;
@@ -395,9 +390,9 @@ if (!empty($missingCells)) {
 }
 
 // ── Save ZIP ──────────────────────────────────────────────────────────────────
-$zip->addFromString($activeSheet, $sheetDom->saveXML());
+$newSheetData = $sheetDom->saveXML($sheetDom->documentElement);
+$zip->addFromString($activeSheet, '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>' . "\n" . $newSheetData);
 if ($hasSS && $ssXml) $zip->addFromString('xl/sharedStrings.xml', $ssXml->saveXML());
-// Xóa calcChain stale — Excel tự rebuild, tránh lỗi "#VALUE" khi mở
 $zip->deleteName('xl/calcChain.xml');
 $zip->close();
 unset($zip);
