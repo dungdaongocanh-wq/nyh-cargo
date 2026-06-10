@@ -55,10 +55,16 @@ function recalcManifestTotals(mysqli $db, int $mid): void {
 $manifest = loadManifest($db, $id);
 if (!$manifest) redirect(BASE_URL . 'operations/manifest/index.php');
 
-// Staff chỉ xem confirmed/completed
-if (currentUserRole() === ROLE_STAFF && $manifest['status'] === 'draft') {
-    setFlash('danger', 'This manifest is not yet confirmed.');
-    redirect(BASE_URL . 'operations/manifest/index.php');
+// Staff: chỉ xem manifest được phân cho họ
+if (currentUserRole() === ROLE_STAFF) {
+    if ((int)($manifest['assigned_staff_id'] ?? 0) !== currentUserId()) {
+        setFlash('danger', 'Access denied. This manifest is not assigned to you.');
+        redirect(BASE_URL . 'operations/manifest/index.php');
+    }
+    if ($manifest['status'] === 'draft') {
+        setFlash('danger', 'This manifest is not yet confirmed.');
+        redirect(BASE_URL . 'operations/manifest/index.php');
+    }
 }
 
 // ════════════════════════════════════════════════════════

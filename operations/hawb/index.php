@@ -50,6 +50,10 @@ if ($filterWeigh !== '') {
     $params[] = (int)$filterWeigh;
     $types   .= 'i';
 }
+// Staff chỉ thấy HAWB của manifest được phân cho mình
+if (currentUserRole() === ROLE_STAFF) {
+    $where[] = "m.assigned_staff_id = " . currentUserId();
+}
 
 $whereSQL = implode(' AND ', $where);
 
