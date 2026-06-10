@@ -413,7 +413,12 @@ $outputDir  = __DIR__ . '/../assets/outputs/';
 if (!is_dir($outputDir)) mkdir($outputDir, 0755, true);
 $outputFile = $outputDir . $safeMawb . '_' . date('YmdHis') . '_FULL.xlsx';
 
+// Giải phóng RAM trước khi ghi Excel
+unset($hawbs, $dimByHawb);
+gc_collect_cycles();
+
 $writer = new Xlsx($spreadsheet);
+$writer->setPreCalculateFormulas(false);
 $writer->save($outputFile);
 
 while (ob_get_level() > 0) ob_end_clean();
