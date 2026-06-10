@@ -61,7 +61,7 @@ $m = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 if (!$m) failExport($mid, 'Không tìm thấy manifest.');
 
-// ── Load HAWBs (full JOIN như hawb_excel.php) ──────────────────────────────────
+// ── Load HAWBs ─────────────────────────────────────────────────────────────────
 $hawbs = $db->query("
     SELECT h.*,
            s.name    AS shipper_name,    s.address AS shipper_address,
@@ -205,7 +205,6 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
     $sheet->getRowDimension(1)->setRowHeight(38);
 
     // ── INFO BLOCK Rows 2-9 ────────────────────────────────────────────────────
-    // Left: MAWB label/value
     $sheet->setCellValue('A2', 'MASTER AIR WAYBILL No :');
     $sheet->getStyle('A2')->getFont()->setBold(true)->setSize(8);
     $sheet->mergeCells('B2:D2');
@@ -303,9 +302,10 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
         $sheet->setCellValue("G{$row}", strtoupper($h['cnee_name']));
         $sheet->setCellValue("H{$row}", $h['payment_term'] ?: 'PP');
 
+        // FIX: dùng VERTICAL_CENTER thay vì VERTICAL_MIDDLE (đã bị xóa trong PhpSpreadsheet v5)
         $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
             'font'      => ['size' => 8],
-            'alignment' => ['vertical' => Alignment::VERTICAL_MIDDLE, 'wrapText' => true],
+            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
             'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '888888']]],
         ]);
         foreach (['B', 'C', 'E', 'H'] as $c)
@@ -330,9 +330,10 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
         $sheet->setCellValue("C{$row}", round($totalGW, 1));
         $sheet->getStyle("C{$row}")->getNumberFormat()->setFormatCode('#,##0.0');
     }
+    // FIX: dùng VERTICAL_CENTER thay vì VERTICAL_MIDDLE
     $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
         'font'      => ['bold' => true, 'size' => 9],
-        'alignment' => ['vertical' => Alignment::VERTICAL_MIDDLE],
+        'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
         'fill'      => ['fillType' => Fill::FILL_SOLID, 'startColor' => ['rgb' => 'F9F9F9']],
         'borders'   => [
             'allBorders' => ['borderStyle' => Border::BORDER_THIN,   'color' => ['rgb' => '888888']],
@@ -375,7 +376,7 @@ $spreadsheet = IOFactory::load($templateFile);
 $blankTpl    = $spreadsheet->getActiveSheet();
 $blankTpl->setTitle('_tpl_');
 
-// Insert MANIFEST sheet at index 0 (pushes template to index 1)
+// Insert MANIFEST sheet at index 0
 $manifestSheet = new Worksheet($spreadsheet, 'MANIFEST');
 $spreadsheet->addSheet($manifestSheet, 0);
 buildManifestSheet($manifestSheet, $m, $hawbs);
