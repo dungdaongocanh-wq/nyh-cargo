@@ -61,7 +61,7 @@ $m = $stmt->get_result()->fetch_assoc();
 $stmt->close();
 if (!$m) failExport($mid, 'Không tìm thấy manifest.');
 
-// ── Load HAWBs ─────────────────────────────────────────────────────────────────
+// ── Load HAWBs ──────────────────────────────────────────────────────────────────
 $hawbs = $db->query("
     SELECT h.*,
            s.name    AS shipper_name,    s.address AS shipper_address,
@@ -282,7 +282,7 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
     ]);
     $sheet->getRowDimension($hRow)->setRowHeight(28);
 
-    // ── Data rows ──────────────────────────────────────────────────────────────
+    // ── Data rows ─────────────────────────────────────────────────────────────
     $row = $hRow + 1;
     $totalPcs = 0; $totalGW = 0.0;
 
@@ -295,17 +295,32 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
             $sheet->setCellValue("C{$row}", (float)$h['gross_weight']);
             $sheet->getStyle("C{$row}")->getNumberFormat()->setFormatCode('#,##0.0');
         }
-        $commodity = trim(explode("\n", $h['commodity'])[0]);
-        $sheet->setCellValue("D{$row}", $commodity);
+
+        // COMMODITY: hiển thị toàn bộ các dòng (giống manifest_print)
+        $commodityLines = array_filter(array_map('trim', explode("\n", $h['commodity'])));
+        $sheet->setCellValue("D{$row}", implode("\n", $commodityLines));
+
         $sheet->setCellValue("E{$row}", $h['dest_code']);
-        $sheet->setCellValue("F{$row}", strtoupper($h['shipper_name']));
-        $sheet->setCellValue("G{$row}", strtoupper($h['cnee_name']));
+
+        // SHIPPER: tên + địa chỉ + điện thoại (giống manifest_print)
+        $shipperParts = [];
+        if (!empty($h['shipper_name']))    $shipperParts[] = strtoupper($h['shipper_name']);
+        if (!empty($h['shipper_address'])) $shipperParts[] = strtoupper($h['shipper_address']);
+        if (!empty($h['shipper_phone']))   $shipperParts[] = 'T:' . $h['shipper_phone'];
+        $sheet->setCellValue("F{$row}", implode("\n", $shipperParts));
+
+        // CONSIGNEE: tên + địa chỉ + điện thoại (giống manifest_print)
+        $cneeParts = [];
+        if (!empty($h['cnee_name']))    $cneeParts[] = strtoupper($h['cnee_name']);
+        if (!empty($h['cnee_address'])) $cneeParts[] = strtoupper($h['cnee_address']);
+        if (!empty($h['cnee_phone']))   $cneeParts[] = 'TEL:' . $h['cnee_phone'];
+        $sheet->setCellValue("G{$row}", implode("\n", $cneeParts));
+
         $sheet->setCellValue("H{$row}", $h['payment_term'] ?: 'PP');
 
-        // FIX: dùng VERTICAL_CENTER thay vì VERTICAL_MIDDLE (đã bị xóa trong PhpSpreadsheet v5)
         $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
             'font'      => ['size' => 8],
-            'alignment' => ['vertical' => Alignment::VERTICAL_CENTER, 'wrapText' => true],
+            'alignment' => ['vertical' => Alignment::VERTICAL_TOP, 'wrapText' => true],
             'borders'   => ['allBorders' => ['borderStyle' => Border::BORDER_THIN, 'color' => ['rgb' => '888888']]],
         ]);
         foreach (['B', 'C', 'E', 'H'] as $c)
@@ -316,21 +331,20 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
         ]);
         $termColor = ($h['payment_term'] === 'PP') ? $darkBlue : '856404';
         $sheet->getStyle("H{$row}")->getFont()->setBold(true)->getColor()->setRGB($termColor);
-        $sheet->getRowDimension($row)->setRowHeight(30);
+        $sheet->getRowDimension($row)->setRowHeight(-1); // auto height để vừa nội dung nhiều dòng
 
         $totalPcs += (int)$h['no_of_pieces'];
         $totalGW  += (float)$h['gross_weight'];
         $row++;
     }
 
-    // ── Total row ──────────────────────────────────────────────────────────────
+    // ── Total row ─────────────────────────────────────────────────────────────
     $sheet->setCellValue("A{$row}", 'Total');
     $sheet->setCellValue("B{$row}", $totalPcs);
     if ($totalGW > 0) {
         $sheet->setCellValue("C{$row}", round($totalGW, 1));
         $sheet->getStyle("C{$row}")->getNumberFormat()->setFormatCode('#,##0.0');
     }
-    // FIX: dùng VERTICAL_CENTER thay vì VERTICAL_MIDDLE
     $sheet->getStyle("A{$row}:H{$row}")->applyFromArray([
         'font'      => ['bold' => true, 'size' => 9],
         'alignment' => ['vertical' => Alignment::VERTICAL_CENTER],
@@ -344,7 +358,7 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
         $sheet->getStyle("{$c}{$row}")->getAlignment()->setHorizontal(Alignment::HORIZONTAL_CENTER);
     $sheet->getRowDimension($row)->setRowHeight(22);
 
-    // ── Footer ─────────────────────────────────────────────────────────────────
+    // ── Footer ────────────────────────────────────────────────────────────────
     $fRow = $row + 2;
     $sheet->mergeCells("A{$fRow}:H{$fRow}");
     $footerParts = [];
