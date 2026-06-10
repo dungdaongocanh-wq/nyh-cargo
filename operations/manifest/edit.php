@@ -442,6 +442,14 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
         <div class="col-lg-4 mt-3 mt-lg-0">
             <div class="d-flex flex-wrap gap-2 justify-content-lg-end">
 
+                <?php if (isManager()): ?>
+                <a href="<?= BASE_URL ?>print/manifest_excel.php?id=<?= $id ?>"
+                   target="_blank" class="btn btn-success btn-sm"
+                   title="Xuất toàn bộ: MANIFEST + tất cả HAWB">
+                    <i class="bi bi-file-earmark-excel me-1"></i>Xuất excel + manifest
+                </a>
+                <?php endif; ?>
+
                 <?php if ($manifest['status'] !== 'draft'): ?>
                 <a href="<?= BASE_URL ?>print/manifest_print.php?id=<?= $id ?>"
                    target="_blank" class="btn btn-light btn-sm">
