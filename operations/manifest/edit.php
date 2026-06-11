@@ -190,6 +190,69 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             setFlash('success', 'HAWB removed.');
             redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
         }
+
+        // ── Upload Documents ─────────────────────────────
+        if ($action === 'upload_docs') {
+            if (!empty($_FILES['manifest_docs']['name'][0])) {
+                $uploadDir   = __DIR__ . '/../../uploads/manifest_docs/';
+                if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
+                $allowedExt  = ['pdf','jpg','jpeg','png','gif','xls','xlsx','doc','docx'];
+                $maxSize     = 10 * 1024 * 1024;
+                $files       = $_FILES['manifest_docs'];
+                $fileCount   = is_array($files['name']) ? count($files['name']) : 0;
+                $uploadedCnt = 0;
+
+                for ($fi = 0; $fi < $fileCount; $fi++) {
+                    if ($files['error'][$fi] !== UPLOAD_ERR_OK) continue;
+                    if ($files['size'][$fi]  > $maxSize)        continue;
+                    $origName = basename($files['name'][$fi]);
+                    $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+                    if (!in_array($ext, $allowedExt)) continue;
+                    $storedName = 'manifest_' . $id . '_' . uniqid() . '.' . $ext;
+                    $destPath   = $uploadDir . $storedName;
+                    if (move_uploaded_file($files['tmp_name'][$fi], $destPath)) {
+                        $mime    = $files['type'][$fi];
+                        $size    = (int)$files['size'][$fi];
+                        $by      = currentUserId();
+                        $relPath = 'uploads/manifest_docs/' . $storedName;
+                        $stmtDoc = $db->prepare("
+                            INSERT INTO manifest_documents
+                                (manifest_id, original_name, stored_name, file_path, file_size, mime_type, uploaded_by)
+                            VALUES (?,?,?,?,?,?,?)
+                        ");
+                        $stmtDoc->bind_param('isssssi',
+                            $id, $origName, $storedName, $relPath, $size, $mime, $by
+                        );
+                        $stmtDoc->execute();
+                        $stmtDoc->close();
+                        $uploadedCnt++;
+                    }
+                }
+                setFlash('success', "Đã đính kèm <strong>$uploadedCnt</strong> chứng từ.");
+            } else {
+                setFlash('warning', 'Vui lòng chọn tệp cần đính kèm.');
+            }
+            redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
+        }
+
+        // ── Delete Document ───────────────────────────────
+        if ($action === 'delete_doc') {
+            $docId = (int)($_POST['doc_id'] ?? 0);
+            if ($docId) {
+                $stmtD = $db->prepare("SELECT * FROM manifest_documents WHERE id=? AND manifest_id=?");
+                $stmtD->bind_param('ii', $docId, $id);
+                $stmtD->execute();
+                $docRow = $stmtD->get_result()->fetch_assoc();
+                $stmtD->close();
+                if ($docRow) {
+                    $filePath = __DIR__ . '/../../' . $docRow['file_path'];
+                    if (file_exists($filePath)) @unlink($filePath);
+                    $db->query("DELETE FROM manifest_documents WHERE id=$docId");
+                    setFlash('success', 'Đã xóa chứng từ <strong>' . e($docRow['original_name']) . '</strong>.');
+                }
+            }
+            redirect(BASE_URL . 'operations/manifest/edit.php?id=' . $id);
+        }
     }
 
     // ── Save weighing (Manager + Staff) ──────────────────
@@ -253,6 +316,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
 // ── Reload sau POST ───────────────────────────────────────
 $manifest = loadManifest($db, $id);
+
+// ── Load manifest documents ───────────────────────────
+$docList = $db->query("
+    SELECT d.*, u.full_name AS uploader_name
+    FROM manifest_documents d
+    LEFT JOIN users u ON d.uploaded_by = u.id
+    WHERE d.manifest_id = $id
+    ORDER BY d.uploaded_at DESC
+")->fetch_all(MYSQLI_ASSOC);
 
 // ── Load HAWBs ───────────────────────────────────────────
 $hawbList = $db->query("
@@ -881,6 +953,95 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
 <?php endif; ?>
 
 </div><!-- /row -->
+
+<!-- ══ DOCUMENT ATTACHMENTS ════════════════════════════ -->
+<div class="card mt-4 mb-4">
+    <div class="card-header d-flex justify-content-between align-items-center">
+        <span class="fw-bold">
+            <i class="bi bi-paperclip text-warning me-2"></i>Chứng từ đính kèm
+            <span class="badge bg-secondary ms-1"><?= count($docList) ?></span>
+        </span>
+        <?php if (isManager()): ?>
+        <button type="button" class="btn btn-warning btn-sm"
+                data-bs-toggle="modal" data-bs-target="#modalUploadDoc">
+            <i class="bi bi-upload me-1"></i>Đính kèm chứng từ
+        </button>
+        <?php endif; ?>
+    </div>
+    <div class="card-body p-0">
+        <?php if (!$docList): ?>
+        <div class="text-center py-4 text-muted">
+            <i class="bi bi-file-earmark-x fs-3 d-block mb-2 opacity-25"></i>
+            Chưa có chứng từ nào được đính kèm.
+        </div>
+        <?php else: ?>
+        <div class="table-responsive">
+            <table class="table table-hover align-middle mb-0">
+                <thead class="table-light">
+                    <tr>
+                        <th class="ps-3">Tên tệp</th>
+                        <th class="text-center">Kích thước</th>
+                        <th>Người đính kèm</th>
+                        <th>Ngày đính kèm</th>
+                        <th class="text-end pe-3">Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody>
+                <?php foreach ($docList as $doc):
+                    $ext = strtolower(pathinfo($doc['original_name'], PATHINFO_EXTENSION));
+                    $iconMap = [
+                        'pdf'  => 'file-earmark-pdf text-danger',
+                        'xls'  => 'file-earmark-excel text-success',
+                        'xlsx' => 'file-earmark-excel text-success',
+                        'doc'  => 'file-earmark-word text-primary',
+                        'docx' => 'file-earmark-word text-primary',
+                        'jpg'  => 'file-earmark-image text-info',
+                        'jpeg' => 'file-earmark-image text-info',
+                        'png'  => 'file-earmark-image text-info',
+                        'gif'  => 'file-earmark-image text-info',
+                    ];
+                    $icon    = $iconMap[$ext] ?? 'file-earmark text-secondary';
+                    $sizeStr = $doc['file_size'] > 1024 * 1024
+                        ? number_format($doc['file_size'] / 1024 / 1024, 1) . ' MB'
+                        : number_format($doc['file_size'] / 1024, 0) . ' KB';
+                ?>
+                <tr>
+                    <td class="ps-3">
+                        <i class="bi bi-<?= $icon ?> me-2 fs-5 align-middle"></i>
+                        <span class="fw-semibold small"><?= e($doc['original_name']) ?></span>
+                    </td>
+                    <td class="text-center">
+                        <span class="badge bg-light text-dark border"><?= $sizeStr ?></span>
+                    </td>
+                    <td class="small text-muted"><?= e($doc['uploader_name'] ?? '—') ?></td>
+                    <td class="small text-muted"><?= fmtDate($doc['uploaded_at'], 'd/m/Y H:i') ?></td>
+                    <td class="text-end pe-3">
+                        <div class="d-flex gap-1 justify-content-end">
+                            <a href="<?= BASE_URL ?>api/download_manifest_doc.php?id=<?= $doc['id'] ?>"
+                               class="btn btn-sm btn-outline-primary btn-action" title="Tải xuống">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            <?php if (isManager()): ?>
+                            <form method="POST" class="d-inline"
+                                  onsubmit="return confirm('Xóa chứng từ \'<?= e(addslashes($doc['original_name'])) ?>\'?')">
+                                <input type="hidden" name="action"  value="delete_doc">
+                                <input type="hidden" name="doc_id"  value="<?= $doc['id'] ?>">
+                                <button class="btn btn-sm btn-outline-danger btn-action" title="Xóa">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </form>
+                            <?php endif; ?>
+                        </div>
+                    </td>
+                </tr>
+                <?php endforeach; ?>
+                </tbody>
+            </table>
+        </div>
+        <?php endif; ?>
+    </div>
+</div>
+
 </main>
 </div>
 
@@ -1110,6 +1271,40 @@ $pageTitle = 'Manifest: ' . ($manifest['mawb_no'] ?? '');
                         data-bs-dismiss="modal">Cancel</button>
                 <button type="submit" class="btn btn-success px-4">
                     <i class="bi bi-plus-circle me-1"></i>Add HAWB
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+<?php endif; ?>
+
+<?php if (isManager()): ?>
+<!-- ══ MODAL: UPLOAD DOCUMENTS ═══════════════════════════ -->
+<div class="modal fade" id="modalUploadDoc" tabindex="-1">
+    <div class="modal-dialog">
+        <form method="POST" class="modal-content" enctype="multipart/form-data">
+            <input type="hidden" name="action" value="upload_docs">
+            <div class="modal-header border-0">
+                <h5 class="modal-title fw-bold">
+                    <i class="bi bi-paperclip text-warning me-2"></i>Đính kèm chứng từ
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <label class="form-label fw-semibold">Chọn tệp</label>
+                <input type="file" name="manifest_docs[]" id="editDocFiles"
+                       class="form-control" multiple required
+                       accept=".pdf,.jpg,.jpeg,.png,.gif,.xls,.xlsx,.doc,.docx">
+                <div class="form-text mt-1">
+                    <i class="bi bi-info-circle me-1"></i>
+                    Chấp nhận: PDF, Ảnh (JPG/PNG), Excel, Word. Tối đa 10 MB/tệp.
+                </div>
+                <div id="editDocPreview" class="mt-3"></div>
+            </div>
+            <div class="modal-footer border-0">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Hủy</button>
+                <button type="submit" class="btn btn-warning px-4">
+                    <i class="bi bi-upload me-1"></i>Đính kèm
                 </button>
             </div>
         </form>
@@ -1356,6 +1551,40 @@ function removeDimGroup(idx) {
 }
 
 <?php if ($activeWeighHawb): ?>calcLive();<?php endif; ?>
+
+// ── Document preview (upload modal) ──────────────────
+const EDIT_DOC_ICONS = {
+    'pdf':'file-earmark-pdf text-danger',
+    'xls':'file-earmark-excel text-success','xlsx':'file-earmark-excel text-success',
+    'doc':'file-earmark-word text-primary','docx':'file-earmark-word text-primary',
+    'jpg':'file-earmark-image text-info','jpeg':'file-earmark-image text-info',
+    'png':'file-earmark-image text-info','gif':'file-earmark-image text-info',
+};
+document.getElementById('editDocFiles')?.addEventListener('change', function () {
+    const preview = document.getElementById('editDocPreview');
+    preview.innerHTML = '';
+    if (!this.files.length) return;
+    Array.from(this.files).forEach(file => {
+        const ext  = file.name.split('.').pop().toLowerCase();
+        const icon = EDIT_DOC_ICONS[ext] || 'file-earmark text-secondary';
+        const sz   = file.size > 1024 * 1024
+            ? (file.size / 1024 / 1024).toFixed(1) + ' MB'
+            : (file.size / 1024).toFixed(0) + ' KB';
+        preview.insertAdjacentHTML('beforeend',
+            `<div class="d-flex align-items-center gap-2 py-1 border-bottom small">
+                <i class="bi bi-${icon} fs-5"></i>
+                <span class="fw-semibold">${file.name}</span>
+                <span class="badge bg-light text-dark border ms-auto">${sz}</span>
+            </div>`
+        );
+    });
+});
+document.getElementById('modalUploadDoc')?.addEventListener('hidden.bs.modal', function () {
+    const f = document.getElementById('editDocFiles');
+    if (f) f.value = '';
+    const p = document.getElementById('editDocPreview');
+    if (p) p.innerHTML = '';
+});
 
 setTimeout(() => {
     document.querySelectorAll('.alert-dismissible').forEach(el =>
