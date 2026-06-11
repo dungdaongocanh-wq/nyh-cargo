@@ -179,7 +179,15 @@ function fillHawbSheet(Worksheet $sheet, array $cellData, array $cellMap): void
             $c = strtoupper(trim((string)$c));
             if ($c === '') continue;
             try {
-                $sheet->setCellValue($c, is_numeric($value) ? (float)$value : $value);
+                // FIX: is_numeric() treats strings like "6E123" as scientific notation in PHP,
+                // causing (float)"6E123" = INF which PhpSpreadsheet writes as "INF.0".
+                // Only cast to float when: value is numeric AND the resulting float is finite
+                // AND the string contains no letters (avoids "6E456", "1E10" style flight codes).
+                $numVal = is_numeric($value) ? (float)$value : false;
+                $cellValue = ($numVal !== false && is_finite($numVal) && !preg_match('/[a-zA-Z]/', $value))
+                    ? $numVal
+                    : $value;
+                $sheet->setCellValue($c, $cellValue);
             } catch (\Exception $e) { /* skip invalid ref */ }
         }
     }
@@ -263,7 +271,7 @@ function buildManifestSheet(Worksheet $sheet, array $m, array $hawbs): void
     $sheet->getStyle('A2:D9')->applyFromArray(['borders' => ['allBorders' => $thin]]);
     $sheet->getStyle('E2:H9')->applyFromArray(['borders' => ['allBorders' => $thin]]);
 
-    // ── Row 10: spacer ─────────────────────────────────────────────────────────
+    // ── Row 10: spacer ────────────────────────────────────────────────────────
     $sheet->getRowDimension(10)->setRowHeight(4);
 
     // ── Row 11: Table header ───────────────────────────────────────────────────
