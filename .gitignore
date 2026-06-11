@@ -3,3 +3,5 @@ assets/outputs/
 assets/templates/ 
 config/database.php 
 .env 
+uploads/manifest_docs/*
+!uploads/manifest_docs/.gitkeep

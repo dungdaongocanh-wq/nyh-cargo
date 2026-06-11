@@ -121,6 +121,42 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $db->query("UPDATE manifests SET total_pieces=$totalPieces WHERE id=$manifest_id");
 
+    // ── Handle Document Uploads ─────────────────────────
+    if (!empty($_FILES['manifest_docs']['name'][0])) {
+        $uploadDir  = __DIR__ . '/../../uploads/manifest_docs/';
+        if (!is_dir($uploadDir)) @mkdir($uploadDir, 0755, true);
+        $allowedExt = ['pdf','jpg','jpeg','png','gif','xls','xlsx','doc','docx'];
+        $maxSize    = 10 * 1024 * 1024;
+        $files      = $_FILES['manifest_docs'];
+        $fileCount  = is_array($files['name']) ? count($files['name']) : 0;
+
+        for ($fi = 0; $fi < $fileCount; $fi++) {
+            if ($files['error'][$fi] !== UPLOAD_ERR_OK) continue;
+            if ($files['size'][$fi]  > $maxSize)        continue;
+            $origName = basename($files['name'][$fi]);
+            $ext      = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+            if (!in_array($ext, $allowedExt)) continue;
+            $storedName = 'manifest_' . $manifest_id . '_' . uniqid() . '.' . $ext;
+            $destPath   = $uploadDir . $storedName;
+            if (move_uploaded_file($files['tmp_name'][$fi], $destPath)) {
+                $mime    = $files['type'][$fi];
+                $size    = (int)$files['size'][$fi];
+                $by      = currentUserId();
+                $relPath = 'uploads/manifest_docs/' . $storedName;
+                $stmtDoc = $db->prepare("
+                    INSERT INTO manifest_documents
+                        (manifest_id, original_name, stored_name, file_path, file_size, mime_type, uploaded_by)
+                    VALUES (?,?,?,?,?,?,?)
+                ");
+                $stmtDoc->bind_param('isssssi',
+                    $manifest_id, $origName, $storedName, $relPath, $size, $mime, $by
+                );
+                $stmtDoc->execute();
+                $stmtDoc->close();
+            }
+        }
+    }
+
     $hawbCount = count($hawb_shippers);
     setFlash('success',
         "Manifest <strong>$mawb_no</strong> created with <strong>$hawbCount</strong> HAWB(s). " .
@@ -220,7 +256,7 @@ $pageTitle = 'New Manifest';
     </ol>
 </nav>
 
-<form method="POST" id="manifestForm">
+<form method="POST" id="manifestForm" enctype="multipart/form-data">
 
 <div class="d-flex justify-content-between align-items-center mb-4">
     <div>
@@ -413,6 +449,27 @@ $pageTitle = 'New Manifest';
                 </div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- SECTION 1.5 — DOCUMENT ATTACHMENTS -->
+<div class="card mb-4">
+    <div class="card-header py-3">
+        <span class="fw-bold">
+            <i class="bi bi-paperclip text-warning me-2"></i>Đính kèm chứng từ
+            <span class="text-muted fw-normal small ms-1">(tùy chọn)</span>
+        </span>
+    </div>
+    <div class="card-body">
+        <label class="form-label">Chọn tệp chứng từ</label>
+        <input type="file" name="manifest_docs[]" id="manifestDocs"
+               class="form-control" multiple
+               accept=".pdf,.jpg,.jpeg,.png,.gif,.xls,.xlsx,.doc,.docx">
+        <div class="form-text">
+            <i class="bi bi-info-circle me-1"></i>
+            Chấp nhận: PDF, Ảnh (JPG/PNG), Excel, Word. Tối đa 10 MB/tệp.
+        </div>
+        <div id="docPreviewList" class="mt-2"></div>
     </div>
 </div>
 
@@ -897,6 +954,34 @@ document.getElementById('manifestForm').addEventListener('submit', function (e) 
             e.preventDefault();
         }
     }
+});
+
+// ── Document file preview ─────────────────────────────
+const DOC_ICONS = {
+    'pdf':'file-earmark-pdf text-danger',
+    'xls':'file-earmark-excel text-success','xlsx':'file-earmark-excel text-success',
+    'doc':'file-earmark-word text-primary','docx':'file-earmark-word text-primary',
+    'jpg':'file-earmark-image text-info','jpeg':'file-earmark-image text-info',
+    'png':'file-earmark-image text-info','gif':'file-earmark-image text-info',
+};
+document.getElementById('manifestDocs')?.addEventListener('change', function () {
+    const preview = document.getElementById('docPreviewList');
+    preview.innerHTML = '';
+    if (!this.files.length) return;
+    Array.from(this.files).forEach(file => {
+        const ext  = file.name.split('.').pop().toLowerCase();
+        const icon = DOC_ICONS[ext] || 'file-earmark text-secondary';
+        const sz   = file.size > 1024 * 1024
+            ? (file.size / 1024 / 1024).toFixed(1) + ' MB'
+            : (file.size / 1024).toFixed(0) + ' KB';
+        preview.insertAdjacentHTML('beforeend',
+            `<div class="d-flex align-items-center gap-2 py-1 border-bottom small">
+                <i class="bi bi-${icon} fs-5"></i>
+                <span class="fw-semibold">${file.name}</span>
+                <span class="badge bg-light text-dark border ms-auto">${sz}</span>
+            </div>`
+        );
+    });
 });
 
 // ── INIT ─────────────────────────────────────────────────
