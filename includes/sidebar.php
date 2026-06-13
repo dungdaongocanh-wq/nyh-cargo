@@ -148,6 +148,15 @@ $currentPath = $_SERVER['PHP_SELF'];
                     <span>Print Labels</span>
                 </a>
             </li>
+
+            <li class="nav-item">
+                <a class="nav-link d-flex align-items-center gap-2 rounded-2 px-3 py-2
+                    <?= str_contains($currentPath, '/print/to_khai') ? 'active' : '' ?>"
+                   href="<?= BASE_URL ?>print/to_khai.php">
+                    <i class="bi bi-file-earmark-text"></i>
+                    <span>Tra Cứu Cont</span>
+                </a>
+            </li>
             <?php endif; ?>
 
             <!-- ===== ADMINISTRATION ===== -->
